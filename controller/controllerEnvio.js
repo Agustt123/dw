@@ -83,7 +83,6 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
         await connDW.end();
     }
 }
-
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     const lastEnvios = await executeQuery(connDW, 'SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdEnvios = lastEnvios.length ? lastEnvios[0].idMaxEnvios : 0;
@@ -92,7 +91,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     for (const envio of enviosRows) {
         const envioDW = { ...envio, didEnvio: envio.did, didOwner };
-        delete envioDW.did;
+        delete envioDW.did; // Asegúrate de eliminar el campo 'did' del objeto
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -111,27 +110,27 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
                 [envioDW.didEnvio, existingEnvio[0].id]);
         }
 
-        // Insertar el nuevo registro solo si el didEnvio y el id son distintos
-        if (existingEnvio.length === 0 || (existingEnvio.length > 0 && existingEnvio[0].id !== envio.id)) {
-            const columnas = Object.keys(envioFiltrado);
-            const valores = Object.values(envioFiltrado);
-            const placeholders = columnas.map(() => "?").join(",");
-            const updateSet = columnas.filter(c => c !== "didEnvio" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
+        // Insertar el nuevo registro
+        const columnas = Object.keys(envioFiltrado);
+        const valores = Object.values(envioFiltrado);
+        const placeholders = columnas.map(() => "?").join(",");
+        const updateSet = columnas.filter(c => c !== "didEnvio" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
 
-            const sql = `
-                INSERT INTO envios (${columnas.join(",")})
-                VALUES (${placeholders})
-                ON DUPLICATE KEY UPDATE ${updateSet}
-            `;
-            await executeQuery(connDW, sql, valores);
+        const sql = `
+            INSERT INTO envios (${columnas.join(",")})
+            VALUES (${placeholders})
+            ON DUPLICATE KEY UPDATE ${updateSet}
+        `;
+        await executeQuery(connDW, sql, valores);
 
-            // Actualizar el idMaxEnvios solo si se inserta un nuevo registro
-            await executeQuery(connDW,
-                `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
-                [envio.id, didOwner]);
-        }
+        // Actualizar el idMaxEnvios solo si se inserta un nuevo registro
+        await executeQuery(connDW,
+            `UPDATE envios_max_ids SET idMaxEnvios = (SELECT MAX(id) FROM envios WHERE didOwner = ?) WHERE didOwner = ?`,
+            [didOwner, didOwner]);
     }
 }
+
+// Similarmente, modifica las funciones procesarAsignaciones y procesarEstados
 
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW) {
     const lastAsignaciones = await executeQuery(connDW, 'SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
@@ -141,10 +140,9 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
     for (const asignacion of asignacionesRows) {
         const asignacionDW = { ...asignacion, didAsignacion: asignacion.did, didOwner };
-        delete asignacionDW.did;
+        delete asignacionDW.did; // Eliminar el campo 'did'
 
-        const asignacionFiltrado = {};  // Asegúrate de que esta variable esté definida
-
+        const asignacionFiltrado = {};
         for (const [k, v] of Object.entries(asignacionDW)) {
             if (columnasAsignacionesDW.includes(k)) asignacionFiltrado[k] = v;
         }
@@ -163,13 +161,13 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         `;
         await executeQuery(connDW, sql, valores);
 
+        // Actualizar el idMaxAsignaciones
         await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxAsignaciones = ? WHERE didOwner = ?`,
-            [asignacion.id, didOwner]);
+            `UPDATE envios_max_ids SET idMaxAsignaciones = (SELECT MAX(id) FROM asignaciones WHERE didOwner = ?) WHERE didOwner = ?`,
+            [didOwner, didOwner]);
     }
 }
 
-c
 async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW) {
     const lastEstados = await executeQuery(connDW, 'SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdEstados = lastEstados.length ? lastEstados[0].idMaxEstados : 0;
@@ -178,7 +176,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
 
     for (const hist of historialRows) {
         const estadoDW = { ...hist, didEstado: hist.did, didOwner };
-        delete estadoDW.did;
+        delete estadoDW.did; // Eliminar el campo 'did'
 
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
@@ -199,9 +197,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
         `;
         await executeQuery(connDW, sql, valores);
 
+        // Actualizar el idMaxEstados
         await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxEstados = ? WHERE didOwner = ?`,
-            [hist.id, didOwner]);
+            `UPDATE envios_max_ids SET idMaxEstados = (SELECT MAX(id) FROM estado WHERE didOwner = ?) WHERE didOwner = ?`,
+            [didOwner, didOwner]);
     }
 }
 
