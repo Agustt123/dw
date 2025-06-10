@@ -83,6 +83,7 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
         await connDW.end();
     }
 }
+
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     const lastEnvios = await executeQuery(connDW, 'SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdEnvios = lastEnvios.length ? lastEnvios[0].idMaxEnvios : 0;
@@ -203,6 +204,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
             [didOwner, didOwner]);
     }
 }
+
 
 async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
     const limitParaEliminar = 100; // Define el límite para la consulta
