@@ -140,15 +140,16 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         const asignacionDW = { ...asignacion, didAsignacion: asignacion.did, didOwner };
         delete asignacionDW.did;
 
-        const asignacionFiltrada = {};
+        const asignacionFiltrado = {};  // Asegúrate de que esta variable esté definida
+
         for (const [k, v] of Object.entries(asignacionDW)) {
-            if (columnasAsignacionesDW.includes(k)) asignacionFiltrada[k] = v;
+            if (columnasAsignacionesDW.includes(k)) asignacionFiltrado[k] = v;
         }
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
-        const columnas = Object.keys(asignacionFiltrada);
-        const valores = Object.values(asignacionFiltrada);
+        const columnas = Object.keys(asignacionFiltrada); // Cambia asignacionFiltrada por asignacionFiltrado
+        const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
         const updateSet = columnas.filter(c => c !== "didAsignacion" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
 
@@ -164,6 +165,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
             [asignacion.id, didOwner]);
     }
 }
+
 
 async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW) {
     const lastEstados = await executeQuery(connDW, 'SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
