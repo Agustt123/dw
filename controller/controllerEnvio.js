@@ -171,6 +171,33 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
             }
         }
 
+        // ---- ELIMINACIONES ----
+        {
+            const limitParaEliminar = 100; // Define el límite para la consulta
+            const lastIdSisIngActiElim = await executeQuery(connDW, 'SELECT idMaxSisIngActiElim FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
+            let lastAidMaxSisIngActiElim = lastIdSisIngActiElim.length ? lastIdSisIngActiElim[0].idMaxSisIngActiElim : 0;
+
+            const sistemaIngresosRows = await executeQuery(connEmpresa,
+                `SELECT id, modulo, data FROM sistema_ingresos_activity 
+         WHERE id > ? ORDER BY id ASC LIMIT ?`,
+                [lastAidMaxSisIngActiElim, limitParaEliminar]);
+
+            for (const row of sistemaIngresosRows) {
+                const { id, modulo, data } = row;
+
+                if (modulo === 'eliminar_envio') {
+                    await executeQuery(connDW,
+                        `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ? LIMIT 1`,
+                        [didOwner, data]);
+                }
+
+                await executeQuery(connDW,
+                    `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ? LIMIT 1`,
+                    [id, didOwner]);
+            }
+        }
+
+
         console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
 
     } catch (error) {
