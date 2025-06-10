@@ -148,7 +148,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
-        const columnas = Object.keys(asignacionFiltrada); // Cambia asignacionFiltrada por asignacionFiltrado
+        const columnas = Object.keys(asignacionFiltrado); // Cambia asignacionFiltrada por asignacionFiltrado
         const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
         const updateSet = columnas.filter(c => c !== "didAsignacion" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
