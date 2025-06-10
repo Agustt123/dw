@@ -125,9 +125,11 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
         await executeQuery(connDW, sql, valores);
 
         // Actualizar el idMaxEnvios solo si se inserta un nuevo registro
+        console.log("dsadsadas");
+
         await executeQuery(connDW,
             `UPDATE envios_max_ids SET idMaxEnvios = (SELECT MAX(id) FROM envios WHERE didOwner = ?) WHERE didOwner = ?`,
-            [didOwner, didOwner]);
+            [envio.did, didOwner]);
     }
 }
 
@@ -137,9 +139,10 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
     const asignacionesRows = await executeQuery(connEmpresa, 'SELECT * FROM envios_asignaciones WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdAsignaciones]);
 
+    let lastProcessedId = 0;
+
     for (const asignacion of asignacionesRows) {
         const asignacionDW = { ...asignacion, didAsignacion: asignacion.did, didOwner };
-
 
         const asignacionFiltrado = {};
         for (const [k, v] of Object.entries(asignacionDW)) {
@@ -148,11 +151,13 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
-        // Insertar el nuevo registro ignorando el id
         const columnas = Object.keys(asignacionFiltrado);
         const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas.filter(c => c !== "didAsignacion" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
+        const updateSet = columnas
+            .filter(c => c !== "didAsignacion" && c !== "didOwner")
+            .map(c => `${c} = VALUES(${c})`)
+            .join(",");
 
         const sql = `
             INSERT INTO asignaciones (${columnas.join(",")})
@@ -161,10 +166,13 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         `;
         await executeQuery(connDW, sql, valores);
 
-        // Actualizar el idMaxAsignaciones
+        lastProcessedId = asignacion.id;
+    }
+
+    if (lastProcessedId > 0) {
         await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxAsignaciones = (SELECT MAX(id) FROM asignaciones WHERE didOwner = ?) WHERE didOwner = ?`,
-            [didOwner, didOwner]);
+            'UPDATE envios_max_ids SET idMaxAsignaciones = ? WHERE didOwner = ?',
+            [lastProcessedId, didOwner]);
     }
 }
 
@@ -174,9 +182,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
 
     const historialRows = await executeQuery(connEmpresa, 'SELECT * FROM envios_historial WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEstados]);
 
+    let lastProcessedId = 0;
+
     for (const hist of historialRows) {
         const estadoDW = { ...hist, didEstado: hist.did, didOwner };
-
 
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
@@ -189,7 +198,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
         const columnas = Object.keys(estadoFiltrado);
         const valores = Object.values(estadoFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas.filter(c => c !== "didEstado" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
+        const updateSet = columnas
+            .filter(c => c !== "didEstado" && c !== "didOwner")
+            .map(c => `${c} = VALUES(${c})`)
+            .join(",");
 
         const sql = `
             INSERT INTO estado (${columnas.join(",")})
@@ -198,12 +210,17 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
         `;
         await executeQuery(connDW, sql, valores);
 
-        // Actualizar el idMaxEstados
+        lastProcessedId = hist.id;
+    }
+
+    // Actualizar idMaxEstados si hubo algún insert válido
+    if (lastProcessedId > 0) {
         await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxEstados = (SELECT MAX(id) FROM estado WHERE didOwner = ?) WHERE didOwner = ?`,
-            [didOwner, didOwner]);
+            'UPDATE envios_max_ids SET idMaxEstados = ? WHERE didOwner = ?',
+            [lastProcessedId, didOwner]);
     }
 }
+
 
 async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
     const limitParaEliminar = 100; // Define el límite para la consulta
