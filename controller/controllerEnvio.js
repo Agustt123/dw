@@ -92,7 +92,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     for (const envio of enviosRows) {
         const envioDW = { ...envio, didEnvio: envio.did, didOwner };
-        delete envioDW.did; // Eliminar el campo 'did'
+        // Eliminar el campo 'did'
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -139,7 +139,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
     for (const asignacion of asignacionesRows) {
         const asignacionDW = { ...asignacion, didAsignacion: asignacion.did, didOwner };
-        delete asignacionDW.did; // Eliminar el campo 'did'
+
 
         const asignacionFiltrado = {};
         for (const [k, v] of Object.entries(asignacionDW)) {
@@ -176,7 +176,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
 
     for (const hist of historialRows) {
         const estadoDW = { ...hist, didEstado: hist.did, didOwner };
-        delete estadoDW.did; // Eliminar el campo 'did'
+
 
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
