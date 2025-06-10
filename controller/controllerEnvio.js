@@ -148,7 +148,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
-        const columnas = Object.keys(asignacionFiltrado); // Cambia asignacionFiltrada por asignacionFiltrado
+        const columnas = Object.keys(asignacionFiltrado);
         const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
         const updateSet = columnas.filter(c => c !== "didAsignacion" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
@@ -216,14 +216,17 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
         const { id, modulo, data } = row;
 
         if (modulo === 'eliminar_envio') {
-            await executeQuery(connDW,
-                `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ? LIMIT 1`,
+            const result = await executeQuery(connDW,
+                `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
                 [didOwner, data]);
-        }
 
-        await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ? LIMIT 1`,
-            [id, didOwner]);
+            // Solo actualizar envios_max_ids si se afectó alguna fila
+            if (result.affectedRows > 0) {
+                await executeQuery(connDW,
+                    `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ?`,
+                    [id, didOwner]);
+            }
+        }
     }
 }
 
