@@ -90,9 +90,10 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     const enviosRows = await executeQuery(connEmpresa, 'SELECT * FROM envios WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEnvios]);
 
+    let lastProcessedId = 0;
+
     for (const envio of enviosRows) {
         const envioDW = { ...envio, didEnvio: envio.did, didOwner };
-        // Eliminar el campo 'did'
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -105,17 +106,19 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
         const existingEnvio = await executeQuery(connDW, 'SELECT id FROM envios WHERE didEnvio = ?', [envioDW.didEnvio]);
 
         if (existingEnvio.length > 0) {
-            // Si existe un registro con el mismo didEnvio y un id distinto, marcarlo como superado
             await executeQuery(connDW,
                 `UPDATE envios SET superado = 1 WHERE didEnvio = ? AND id != ?`,
                 [envioDW.didEnvio, existingEnvio[0].id]);
         }
 
-        // Insertar el nuevo registro ignorando el id
+        // Insertar el nuevo registro
         const columnas = Object.keys(envioFiltrado);
         const valores = Object.values(envioFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas.filter(c => c !== "didEnvio" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
+        const updateSet = columnas
+            .filter(c => c !== "didEnvio" && c !== "didOwner")
+            .map(c => `${c} = VALUES(${c})`)
+            .join(",");
 
         const sql = `
             INSERT INTO envios (${columnas.join(",")})
@@ -124,12 +127,13 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
         `;
         await executeQuery(connDW, sql, valores);
 
-        // Actualizar el idMaxEnvios solo si se inserta un nuevo registro
-        console.log("dsadsadas");
+        lastProcessedId = envio.id; // este id viene de la base de producción
+    }
 
+    if (lastProcessedId > 0) {
         await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxEnvios = (SELECT MAX(id) FROM envios WHERE didOwner = ?) WHERE didOwner = ?`,
-            [envio.did, didOwner]);
+            `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
+            [lastProcessedId, didOwner]);
     }
 }
 
