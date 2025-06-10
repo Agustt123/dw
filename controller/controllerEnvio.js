@@ -105,28 +105,31 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
         const existingEnvio = await executeQuery(connDW, 'SELECT id FROM envios WHERE didEnvio = ?', [envioDW.didEnvio]);
 
         if (existingEnvio.length > 0) {
-            // Si existe un registro con el mismo didEnvio, marcarlo como superado
+            // Si existe un registro con el mismo didEnvio y un id distinto, marcarlo como superado
             await executeQuery(connDW,
                 `UPDATE envios SET superado = 1 WHERE didEnvio = ? AND id != ?`,
                 [envioDW.didEnvio, existingEnvio[0].id]);
         }
 
-        // Insertar el nuevo registro
-        const columnas = Object.keys(envioFiltrado);
-        const valores = Object.values(envioFiltrado);
-        const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas.filter(c => c !== "didEnvio" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
+        // Insertar el nuevo registro solo si el didEnvio y el id son distintos
+        if (existingEnvio.length === 0 || (existingEnvio.length > 0 && existingEnvio[0].id !== envio.id)) {
+            const columnas = Object.keys(envioFiltrado);
+            const valores = Object.values(envioFiltrado);
+            const placeholders = columnas.map(() => "?").join(",");
+            const updateSet = columnas.filter(c => c !== "didEnvio" && c !== "didOwner").map(c => `${c} = VALUES(${c})`).join(",");
 
-        const sql = `
-            INSERT INTO envios (${columnas.join(",")})
-            VALUES (${placeholders})
-            ON DUPLICATE KEY UPDATE ${updateSet}
-        `;
-        await executeQuery(connDW, sql, valores);
+            const sql = `
+                INSERT INTO envios (${columnas.join(",")})
+                VALUES (${placeholders})
+                ON DUPLICATE KEY UPDATE ${updateSet}
+            `;
+            await executeQuery(connDW, sql, valores);
 
-        await executeQuery(connDW,
-            `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
-            [envio.id, didOwner]);
+            // Actualizar el idMaxEnvios solo si se inserta un nuevo registro
+            await executeQuery(connDW,
+                `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
+                [envio.id, didOwner]);
+        }
     }
 }
 
@@ -166,7 +169,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
     }
 }
 
-
+c
 async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW) {
     const lastEstados = await executeQuery(connDW, 'SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdEstados = lastEstados.length ? lastEstados[0].idMaxEstados : 0;
@@ -220,7 +223,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
                 `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
                 [didOwner, data]);
 
-            // Solo actualizar envios_max_ids si se afectó alguna fila
+            // Solo actualizar envios_max_ids si se afectó alguna fila sino pasa de largo y bueno listo 
             if (result.affectedRows > 0) {
                 await executeQuery(connDW,
                     `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ?`,
