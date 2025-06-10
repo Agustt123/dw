@@ -92,7 +92,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     for (const envio of enviosRows) {
         const envioDW = { ...envio, didEnvio: envio.did, didOwner };
-        delete envioDW.did; // Asegúrate de eliminar el campo 'did' del objeto
+        delete envioDW.did; // Eliminar el campo 'did'
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -111,7 +111,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
                 [envioDW.didEnvio, existingEnvio[0].id]);
         }
 
-        // Insertar el nuevo registro
+        // Insertar el nuevo registro ignorando el id
         const columnas = Object.keys(envioFiltrado);
         const valores = Object.values(envioFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
@@ -131,8 +131,6 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     }
 }
 
-// Similarmente, modifica las funciones procesarAsignaciones y procesarEstados
-
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW) {
     const lastAsignaciones = await executeQuery(connDW, 'SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdAsignaciones = lastAsignaciones.length ? lastAsignaciones[0].idMaxAsignaciones : 0;
@@ -150,6 +148,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
+        // Insertar el nuevo registro ignorando el id
         const columnas = Object.keys(asignacionFiltrado);
         const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
@@ -186,6 +185,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
 
         if (Object.keys(estadoFiltrado).length === 0) continue;
 
+        // Insertar el nuevo registro ignorando el id
         const columnas = Object.keys(estadoFiltrado);
         const valores = Object.values(estadoFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
@@ -205,7 +205,6 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
     }
 }
 
-
 async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
     const limitParaEliminar = 100; // Define el límite para la consulta
     const lastIdSisIngActiElim = await executeQuery(connDW, 'SELECT idMaxSisIngActiElim FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
@@ -224,7 +223,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
                 `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
                 [didOwner, data]);
 
-            // Solo actualizar envios_max_ids si se afectó alguna fila sino pasa de largo y bueno listo 
+            // Solo actualizar envios_max_ids si se afectó alguna fila sino pasa de largo y bueno
             if (result.affectedRows > 0) {
                 await executeQuery(connDW,
                     `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ?`,
