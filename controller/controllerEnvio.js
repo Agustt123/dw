@@ -90,33 +90,26 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     const enviosRows = await executeQuery(connEmpresa, 'SELECT * FROM envios WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEnvios]);
 
-    let lastProcessedId = 0;
+    let lastProcessedId = 0; // Para almacenar el último ID procesado
 
     for (const envio of enviosRows) {
-        const envioDW = { ...envio, didEnvio: envio.did, didOwner };
+        const envioDW = { ...envio, didOwner }; // Mantener didOwner
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
-            if (columnasEnviosDW.includes(k)) envioFiltrado[k] = v;
+            if (columnasEnviosDW.includes(k) && k !== 'id') { // Ignorar el ID
+                envioFiltrado[k] = v;
+            }
         }
 
         if (Object.keys(envioFiltrado).length === 0) continue;
 
-        // Verificar si ya existe un registro con el mismo didEnvio
-        const existingEnvio = await executeQuery(connDW, 'SELECT id FROM envios WHERE didEnvio = ?', [envioDW.didEnvio]);
-
-        if (existingEnvio.length > 0) {
-            await executeQuery(connDW,
-                `UPDATE envios SET superado = 1 WHERE didEnvio = ? AND id != ?`,
-                [envioDW.didEnvio, existingEnvio[0].id]);
-        }
-
-        // Insertar el nuevo registro
+        // Insertar el nuevo registro (sin el ID)
         const columnas = Object.keys(envioFiltrado);
         const valores = Object.values(envioFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
         const updateSet = columnas
-            .filter(c => c !== "didEnvio" && c !== "didOwner")
+            .filter(c => c !== "didEnvio" && c !== "didOwner") // Ignorar didEnvio y didOwner en la actualización
             .map(c => `${c} = VALUES(${c})`)
             .join(",");
 
@@ -127,15 +120,19 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
         `;
         await executeQuery(connDW, sql, valores);
 
-        lastProcessedId = envio.id; // este id viene de la base de producción
+        lastProcessedId = envio.id; // Guardar el ID del último registro procesado
     }
 
+    // Actualizar el máximo ID procesado en envios_max_ids
     if (lastProcessedId > 0) {
         await executeQuery(connDW,
             `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
             [lastProcessedId, didOwner]);
     }
 }
+
+// Implementa cambios similares en procesarAsignaciones y procesarEstados
+
 
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW) {
     const lastAsignaciones = await executeQuery(connDW, 'SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
