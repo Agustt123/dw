@@ -247,9 +247,9 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
                 [didOwner, data]);
 
             // Solo actualizar envios_max_ids si se afectó alguna fila
-            if (result.affectedRows > 0) {
-                maxIdEliminacion = Math.max(maxIdEliminacion, id); // Guardar el ID más alto procesado
-            }
+            //    if (result.affectedRows > 0) {
+            //      maxIdEliminacion = Math.max(maxIdEliminacion, id); // Guardar el ID más alto procesado
+            //}
         }
     }
 
