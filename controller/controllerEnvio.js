@@ -93,7 +93,11 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     let lastProcessedId = 0; // Para almacenar el último ID procesado
 
     for (const envio of enviosRows) {
-        const envioDW = { ...envio, didOwner }; // Mantener didOwner
+        const envioDW = {
+            ...envio,
+            didEnvio: envio.did, // Asignar did a didEnvio
+            didOwner
+        };
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -130,6 +134,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
             [lastProcessedId, didOwner]);
     }
 }
+
 
 // Implementa cambios similares en procesarAsignaciones y procesarEstados
 
