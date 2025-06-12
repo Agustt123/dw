@@ -235,7 +235,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
 
     const sistemaIngresosRows = await executeQuery(connEmpresa,
         `SELECT id, modulo, data FROM sistema_ingresos_activity 
-         WHERE id > ? ORDER BY id ASC LIMIT ?`,
+         WHERE id > ? AND modulo = 'eliminra_envio' ORDER BY id ASC LIMIT ?`,
         [lastAidMaxSisIngActiElim, limitParaEliminar]);
 
     let maxIdEliminacion = 0; // Para almacenar el último ID de eliminación procesado
@@ -243,19 +243,21 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
     for (const row of sistemaIngresosRows) {
         const { id, modulo, data } = row;
 
-        if (modulo === 'eliminra_envio') {
-            console.log("entramosssssssssss");
+        if (modulo !== 'eliminra_envio') {
+            console.log(`Módulo ignorado: ${modulo}`); // Registrar módulos no relevantes
+            continue; // Saltar a la siguiente iteración si no es el módulo esperado
+        }
 
-            const result = await executeQuery(connDW,
-                `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
-                [didOwner, data], true);
+        console.log("Procesando eliminación para la fila:", row);
 
-            // Solo actualizar envios_max_ids si se afectó alguna fila
-            if (result.affectedRows > 0) {
-                console.log("222222222222222222222222222222222222");
+        const result = await executeQuery(connDW,
+            `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
+            [didOwner, data], true);
 
-                maxIdEliminacion = Math.max(maxIdEliminacion, id); // Guardar el ID más alto procesado
-            }
+        // Solo actualizar envios_max_ids si se afectó alguna fila
+        if (result.affectedRows > 0) {
+            console.log("Se realizó una eliminación, ID:", id);
+            maxIdEliminacion = Math.max(maxIdEliminacion, id); // Guardar el ID más alto procesado
         }
     }
 
@@ -264,6 +266,9 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
         await executeQuery(connDW,
             `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ?`,
             [maxIdEliminacion, didOwner]);
+        console.log("ID máximo actualizado a:", maxIdEliminacion);
+    } else {
+        console.log("No se realizaron eliminaciones, no se actualiza el ID máximo.");
     }
 }
 
