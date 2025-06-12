@@ -242,6 +242,8 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
         const { id, modulo, data } = row;
 
         if (modulo === 'eliminra_envio') {
+            console.log("entramosssssssssss");
+
             const result = await executeQuery(connDW,
                 `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
                 [didOwner, data]);

@@ -63,7 +63,7 @@ async function getConnection(idempresa) {
                 user: "logisticaA",               // Usuario desde Redis
                 password: "logisticaa",           // Contraseña desde Redis
          } */
-        console.log("Configuración de la conexión:", config);
+        //  console.log("Configuración de la conexión:", config);
 
         return mysql.createConnection(config);
     } catch (error) {
