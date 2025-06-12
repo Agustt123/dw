@@ -246,10 +246,12 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
 
             const result = await executeQuery(connDW,
                 `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
-                [didOwner, data]);
+                [didOwner, data], true);
 
             // Solo actualizar envios_max_ids si se afectó alguna fila
             if (result.affectedRows > 0) {
+                console.log("222222222222222222222222222222222222");
+
                 maxIdEliminacion = Math.max(maxIdEliminacion, id); // Guardar el ID más alto procesado
             }
         }
