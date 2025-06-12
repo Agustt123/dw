@@ -232,23 +232,23 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
     let lastAidMaxSisIngActiElim = lastIdSisIngActiElim.length ? lastIdSisIngActiElim[0].idMaxSisIngActiElim : 0;
 
     const sistemaIngresosRows = await executeQuery(connEmpresa,
-        `SELECT id, modulo, data FROM sistema_ingresos_activity 
-         WHERE id > ? ORDER BY id ASC LIMIT ?`,
+        `SELECT did, modulo, data FROM sistema_ingresos_activity 
+         WHERE did > ? ORDER BY id ASC LIMIT ?`,
         [lastAidMaxSisIngActiElim, limitParaEliminar]);
 
     for (const row of sistemaIngresosRows) {
-        const { id, modulo, data } = row;
+        const { did, modulo, data } = row;
 
         if (modulo === 'eliminar_envio') {
             const result = await executeQuery(connDW,
                 `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
-                [didOwner, data]);
+                [didOwner, did]);
 
             // Solo actualizar envios_max_ids si se afectó alguna fila sino pasa de largo y bueno
             if (result.affectedRows > 0) {
                 await executeQuery(connDW,
                     `UPDATE envios_max_ids SET idMaxSisIngActiElim = ? WHERE didOwner = ?`,
-                    [id, didOwner]);
+                    [did, didOwner]);
             }
         }
     }
