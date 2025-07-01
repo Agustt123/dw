@@ -1,6 +1,6 @@
 const { getConnection, getConnectionLocal, executeQuery, redisClient } = require("../db");
 
-async function sincronizarEnviosParaTodasLasEmpresas() {
+/*async function sincronizarEnviosParaTodasLasEmpresas() {
     while (true) {
         try {
             const empresaDataStr = await redisClient.get("empresasData");
@@ -49,8 +49,64 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
             await esperar(30000); // Espera 30 segundos si falla algo grave
         }
     }
-}
+}*/
+async function sincronizarEnviosParaTodasLasEmpresas() {
+    while (true) {
+        try {
+            /*   const empresaDataStr = await redisClient.get("empresasData");
+   
+               if (!empresaDataStr) {
+                   console.error("❌ No se encontró 'empresasData' en Redis.");
+                   await esperar(30000); // Espera 30 segundos antes de volver a intentar
+                   continue;
+               }
+   
+               const empresaData = JSON.parse(empresaDataStr);*/
 
+            // Solo empresa 164 en entorno de prueba
+            const didOwners = ["164"];
+
+            // Código original comentado para cuando se necesiten todas:
+            /*
+            const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
+
+            // Insertar todos los didOwners si no existen
+            const connDWTemp = await getConnectionLocal(0); // conexión temporal para DW
+            for (const didOwnerStr of didOwners) {
+                const didOwner = parseInt(didOwnerStr, 10);
+                if (isNaN(didOwner)) continue;
+
+                await executeQuery(
+                    connDWTemp,
+                    `INSERT IGNORE INTO envios_max_ids (didOwner, idMaxEnvios, idMaxAsignaciones, idMaxEstados)
+                     VALUES (?, 0, 0, 0)`,
+                    [didOwner]
+                );
+            }
+            await connDWTemp.end();
+            */
+
+            // Procesar solo empresa 164
+            for (const didOwnerStr of didOwners) {
+                const didOwner = parseInt(didOwnerStr, 10);
+                if (isNaN(didOwner)) continue;
+
+                try {
+                    await sincronizarEnviosBatchParaEmpresa(didOwner);
+                } catch (error) {
+                    console.error(`❌ Error sincronizando datos para empresa ${didOwner}:`, error);
+                }
+            }
+
+            // Pausa para no saturar el servidor
+            await esperar(10000);
+
+        } catch (error) {
+            console.error("❌ Error general en la sincronización:", error);
+            await esperar(30000);
+        }
+    }
+}
 async function sincronizarEnviosBatchParaEmpresa(didOwner) {
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
