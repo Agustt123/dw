@@ -1,6 +1,6 @@
 const { getConnection, getConnectionLocal, executeQuery, redisClient } = require("../db");
 
-/*async function sincronizarEnviosParaTodasLasEmpresas() {
+async function sincronizarEnviosParaTodasLasEmpresas() {
     while (true) {
         try {
             const empresaDataStr = await redisClient.get("empresasData");
@@ -49,8 +49,8 @@ const { getConnection, getConnectionLocal, executeQuery, redisClient } = require
             await esperar(30000); // Espera 30 segundos si falla algo grave
         }
     }
-}*/
-async function sincronizarEnviosParaTodasLasEmpresas() {
+}
+async function sincronizarEnviosParaTodasLasEmpresas2() {
     while (true) {
         try {
             /*   const empresaDataStr = await redisClient.get("empresasData");
@@ -110,35 +110,44 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
 async function sincronizarEnviosBatchParaEmpresa(didOwner) {
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
-    const connEmpresa = await getConnection(didOwner);
-    const connDW = await getConnectionLocal(didOwner);
+    let connEmpresa;
+    let connDW;
 
     try {
+        try {
+            connEmpresa = await getConnection(164);
+        } catch (err) {
+            console.error(`❌ Error al obtener conexión para empresa ${didOwner}:`, err);
+            return; // Salir del batch, sin continuar
+        }
+        connDW = await getConnectionLocal(didOwner);
+
         const columnasEnviosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM envios")).map(c => c.Field);
         const columnasAsignacionesDW = (await executeQuery(connDW, "SHOW COLUMNS FROM asignaciones")).map(c => c.Field);
         const columnasEstadosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM estado")).map(c => c.Field);
 
-        // ---- ENVÍOS ----
         await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW);
-
-        // ---- ASIGNACIONES ----
         await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW);
-
-        // ---- ESTADOS ----
         await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW);
-
-        // ---- ELIMINACIONES ----
         await procesarEliminaciones(connEmpresa, connDW, didOwner);
 
         console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
-
     } catch (error) {
         console.error(`❌ Error procesando empresa ${didOwner}:`, error);
     } finally {
-        await connEmpresa.end();
-        await connDW.end();
+        // Liberar si existe y tiene release
+        if (connEmpresa && typeof connEmpresa.release === "function") {
+            console.log(`[${didOwner}] Liberando conexión`);
+            connEmpresa.release();
+        }
+
+        // Si querés cerrar la conexión local explícitamente (aunque no es un pool)
+        if (connDW && typeof connDW.end === "function") {
+            await connDW.end();
+        }
     }
 }
+
 
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     const lastEnvios = await executeQuery(connDW, 'SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
@@ -146,30 +155,42 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 
     const enviosRows = await executeQuery(connEmpresa, 'SELECT * FROM envios WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEnvios]);
 
-    let lastProcessedId = 0; // Para almacenar el último ID procesado
+    let lastProcessedId = 0;
+
+    // Columnas que NO pueden ser NULL y para las que NO tienes un valor en la fuente
+    const columnasNoNull = [
+        "estimated_delivery_time_date",
+        "estimated_delivery_time_date_72",
+        "estimated_delivery_time_date_480",
+        // agrega acá más si es necesario
+    ];
 
     for (const envio of enviosRows) {
         const envioDW = {
             ...envio,
-            didEnvio: envio.did, // Asignar did a didEnvio
+            didEnvio: envio.did,
             didOwner
         };
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
-            if (columnasEnviosDW.includes(k) && k !== 'id') { // Ignorar el ID
-                envioFiltrado[k] = v;
+            if (columnasEnviosDW.includes(k) && k !== "id") {
+                if (v === null && columnasNoNull.includes(k)) {
+                    // no la agregamos, la ignoramos para que no aparezca en el INSERT
+                    continue;
+                }
+                envioFiltrado[k] = v; // la incluimos solo si pasa el filtro
             }
         }
 
+
         if (Object.keys(envioFiltrado).length === 0) continue;
 
-        // Insertar el nuevo registro (sin el ID)
         const columnas = Object.keys(envioFiltrado);
         const valores = Object.values(envioFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
         const updateSet = columnas
-            .filter(c => c !== "didEnvio" && c !== "didOwner") // Ignorar didEnvio y didOwner en la actualización
+            .filter(c => c !== "didEnvio" && c !== "didOwner")
             .map(c => `${c} = VALUES(${c})`)
             .join(",");
 
@@ -178,18 +199,19 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
             VALUES (${placeholders})
             ON DUPLICATE KEY UPDATE ${updateSet}
         `;
+
         await executeQuery(connDW, sql, valores);
 
-        lastProcessedId = envio.id; // Guardar el ID del último registro procesado
+        lastProcessedId = envio.id;
     }
 
-    // Actualizar el máximo ID procesado en envios_max_ids
     if (lastProcessedId > 0) {
         await executeQuery(connDW,
             `UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?`,
             [lastProcessedId, didOwner]);
     }
 }
+
 
 
 // Implementa cambios similares en procesarAsignaciones y procesarEstados
@@ -304,11 +326,11 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
             continue; // Saltar a la siguiente iteración si no es el módulo esperado
         }
 
-        console.log("Procesando eliminación para la fila:", row);
+        //&   console.log("Procesando eliminación para la fila:", row);
 
         const result = await executeQuery(connDW,
             `UPDATE envios SET elim = 1 WHERE didOwner = ? AND didEnvio = ?`,
-            [didOwner, data], true);
+            [didOwner, data]);
 
         // Solo actualizar envios_max_ids si se afectó alguna fila
         if (result.affectedRows > 0) {
