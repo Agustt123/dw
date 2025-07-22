@@ -19,9 +19,9 @@ async function procesarFacturacionPorFecha(didOwner, fecha) {
             if (cantidadEstados > 1) {
                 await executeQuery(connection, `
                     UPDATE envios
-                    SET facturacion = 1
+                    SET facturacion = 1, cantidadEstado = ?
                     WHERE didOwner = ? AND didEnvio = ? AND superado = 0 AND elim = 0
-                `, [didOwner, didEnvio]);
+                `, [didOwner, didEnvio, cantidadEstados]);
                 console.log(`✅ didEnvio ${didEnvio}: facturacion=1 por estados (${cantidadEstados} cambios)`);
             }
         }
@@ -31,7 +31,7 @@ async function procesarFacturacionPorFecha(didOwner, fecha) {
             SELECT DISTINCT didEnvio
             FROM asignaciones
             WHERE didOwner = ? AND DATE(autofecha) = ?
-        `, [didOwner, fecha]);
+        `, [didOwner, fecha], true);
 
         // Actualizar facturacion para esos envios que tienen asignaciones en esa fecha
         for (const { didEnvio } of asignacionesPorEnvio) {
@@ -51,7 +51,7 @@ async function procesarFacturacionPorFecha(didOwner, fecha) {
 }
 
 // Ejemplo de uso:
-// procesarFacturacionPorFecha(164, "2025-07-18");
+procesarFacturacionPorFecha(164, "2025-06-20");
 
 module.exports = {
     procesarFacturacionPorFecha
