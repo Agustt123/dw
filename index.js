@@ -2,7 +2,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const { redisClient, getFromRedis } = require("./db.js");
-const { sincronizarEnviosParaTodasLasEmpresas } = require("./controller/controllerEnvio.js");
+const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpresas2 } = require("./controller/controllerEnvio.js");
 
 
 
