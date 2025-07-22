@@ -44,7 +44,7 @@ const PORT = 13000;
 (async () => {
     try {
         await actualizarEmpresas();
-        await sincronizarEnviosParaTodasLasEmpresas();
+        await sincronizarEnviosParaTodasLasEmpresas2();
 
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
