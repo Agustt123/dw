@@ -115,7 +115,7 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
 
     try {
         try {
-            connEmpresa = await getConnection(164);
+            connEmpresa = await getConnection(didOwner);
         } catch (err) {
             console.error(`❌ Error al obtener conexión para empresa ${didOwner}:`, err);
             return; // Salir del batch, sin continuar
@@ -356,5 +356,5 @@ function esperar(ms) {
 }
 
 module.exports = {
-    sincronizarEnviosParaTodasLasEmpresas,
+    sincronizarEnviosParaTodasLasEmpresas2,
 };
