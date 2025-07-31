@@ -92,7 +92,7 @@ async function sincronizarEnviosParaTodasLasEmpresas2() {
                 if (isNaN(didOwner)) continue;
 
                 try {
-                    await sincronizarEnviosBatchParaEmpresa(didOwner);
+                    await sincronizarEnviosBatchParaEmpresa(164);
                 } catch (error) {
                     console.error(`❌ Error sincronizando datos para empresa ${didOwner}:`, error);
                 }
@@ -127,7 +127,11 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
         const columnasEstadosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM estado")).map(c => c.Field);
 
         await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW);
+        console.log(`✅ Envios sincronizados para empresa ${didOwner}`);
+
         await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW);
+        console.log(`✅ Asignaciones sincronizadas para empresa ${didOwner}`);
+
         await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW);
         await procesarEliminaciones(connEmpresa, connDW, didOwner);
 
@@ -217,6 +221,8 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
 // Implementa cambios similares en procesarAsignaciones y procesarEstados
 
 
+
+
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW) {
     const lastAsignaciones = await executeQuery(connDW, 'SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdAsignaciones = lastAsignaciones.length ? lastAsignaciones[0].idMaxAsignaciones : 0;
@@ -233,6 +239,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
             if (columnasAsignacionesDW.includes(k)) asignacionFiltrado[k] = v;
         }
 
+
         if (Object.keys(asignacionFiltrado).length === 0) continue;
 
         const columnas = Object.keys(asignacionFiltrado);
@@ -248,7 +255,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
             VALUES (${placeholders})
             ON DUPLICATE KEY UPDATE ${updateSet}
         `;
-        await executeQuery(connDW, sql, valores);
+        await executeQuery(connDW, sql, valores, true);
 
         lastProcessedId = asignacion.id;
     }
@@ -264,7 +271,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
     const lastEstados = await executeQuery(connDW, 'SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?', [didOwner]);
     let lastIdEstados = lastEstados.length ? lastEstados[0].idMaxEstados : 0;
 
-    const historialRows = await executeQuery(connEmpresa, 'SELECT * FROM envios_historial WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEstados]);
+    const historialRows = await executeQuery(connEmpresa, 'SELECT * FROM envios_historial WHERE id > ? ORDER BY id ASC LIMIT 100', [lastIdEstados], true);
 
     let lastProcessedId = 0;
 
@@ -293,6 +300,8 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
             ON DUPLICATE KEY UPDATE ${updateSet}
         `;
         await executeQuery(connDW, sql, valores);
+        console.log("estado insertado:", estadoFiltrado);
+
 
         lastProcessedId = hist.id;
     }

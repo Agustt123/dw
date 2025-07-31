@@ -42,21 +42,25 @@ async function corregirFechasHistorialTodasEmpresas() {
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
         const query = `
-            ALTER TABLE sistema_perfiles CHANGE accesos accesos VARCHAR(256) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL;
+            ALTER TABLE devoluciones CHANGE didEnvio didEnvios VARCHAR(512) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL;;
+        
+            
         `;
 
         for (const didOwnerStr of didOwners) {
-            //  if (didOwnerStr == "275" || didOwnerStr == "276") continue;
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
-            if (didOwner <= 276) continue;
+            if (didOwner == "275" || didOwner == "276") continue;
 
+            // if (didOwner <= 276) continue;
+
+            const conn = await getConnection(didOwner);
             try {
-                const conn = await getConnection(didOwner);
                 await executeQuery(conn, query, []);
                 await conn.release();
                 console.log(`✅ Fechas corregidas para empresa ${didOwner}`);
             } catch (err) {
+                await conn.release();
                 console.error(`❌ Error corrigiendo fechas para empresa ${didOwner}:`, err.message);
             }
         }
