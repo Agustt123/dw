@@ -42,8 +42,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
         const query = `
-            ALTER TABLE devoluciones CHANGE didEnvio didEnvios VARCHAR(512) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL;;
-        
+          UPDATE sistema_menu_ng SET elim = '1' WHERE link LIKE  "FmenuShow('rut_geoEnvios',%" and carpeta ="geoEnvios"
             
         `;
 

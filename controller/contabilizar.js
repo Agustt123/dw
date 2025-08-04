@@ -38,21 +38,22 @@ async function procesarFacturacionPorFecha(didOwner, fecha) {
         }
 
         // 2) Asignaciones
-        /*     const asignacionesPorEnvio = await executeQuery(connection, `
+
+        const asignacionesPorEnvio = await executeQuery(connection, `
                  SELECT DISTINCT didEnvio
                  FROM asignaciones
                  WHERE didOwner = ? AND DATE(autofecha) = ?
              `, [didOwner, fecha], true);
-     
-             for (const { didEnvio } of asignacionesPorEnvio) {
-                 await executeQuery(connection, `
+
+        for (const { didEnvio } of asignacionesPorEnvio) {
+            await executeQuery(connection, `
                      UPDATE envios
                      SET facturacion = 1
                      WHERE didOwner = ? AND didEnvio = ? AND superado = 0 AND elim = 0
                  `, [didOwner, didEnvio]);
-                 console.log(`✅ didEnvio ${didEnvio}: facturacion=1 por asignaciones`);
-             }
-                 */
+            console.log(`✅ didEnvio ${didEnvio}: facturacion=1 por asignaciones`);
+        }
+
         console.log("✅ Procesamiento de facturación finalizado.")
 
 
@@ -72,7 +73,7 @@ console.log(`🚀 Script iniciado. Hora actual del sistema: ${ahora}`);
 })();
 
 // ⏰ Programar para las 2:00 AM de Argentina cada día
-cron.schedule("0 2 * * *", async () => {
+cron.schedule("0 4 * * *", async () => {
     const fechaAyer = obtenerFechaAyerArgentina();
     const horaEjecucion = new Date().toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
     console.log(`🕑 [${horaEjecucion}] Ejecutando cron para fecha ${fechaAyer}`);
