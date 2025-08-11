@@ -73,7 +73,7 @@ async function EnviarcdAsignacion(didOwner) {
         const connection = await getConnectionLocal(didOwner); // Te recomiendo que uses el didOwner directamente aquí
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, operador, autofecha
+            SELECT didOwner, didEnvio, operador, autofecha,didCliente
             FROM asignaciones
             WHERE cdc = 0 AND didOwner = ?
             LIMIT 5
@@ -87,8 +87,8 @@ async function EnviarcdAsignacion(didOwner) {
         }
 
         const insertQuery = `
-            INSERT INTO cdc (didOwner, didPaquete, ejecutar, didChofer, autofecha, disparador)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO cdc (didOwner, didPaquete, ejecutar, didChofer, autofecha, disparadorm,didCliente)
+            VALUES (?, ?, ?, ?, ?, ?,?)
         `;
 
         const updateQuery = `
@@ -108,7 +108,7 @@ async function EnviarcdAsignacion(didOwner) {
         const canal = "asignaciones";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, autofecha } = row;
+            const { didOwner, didEnvio, operador, autofecha, didCliente } = row;
 
             for (const disparador of disparadores) {
                 await executeQuery(connection, insertQuery, [
@@ -117,7 +117,8 @@ async function EnviarcdAsignacion(didOwner) {
                     disparador,
                     operador,
                     autofecha,
-                    canal
+                    canal,
+                    didCliente
                 ]);
             }
 
