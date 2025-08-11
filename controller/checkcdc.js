@@ -6,7 +6,7 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, estado
+            SELECT didOwner, didEnvio, estado,didCliente
             FROM estado
             WHERE cdc = 0 AND didOwner = ? and estado in (5,9,14)
             LIMIT 5
@@ -20,8 +20,8 @@ async function EnviarcdcEstado(didOwner) {
         }
 
         const insertQuery = `
-            INSERT INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador,didCliente)
+            VALUES (?, ?, ?, ?, ?,?)
         `;
 
         const updateQuery = `
@@ -41,7 +41,7 @@ async function EnviarcdcEstado(didOwner) {
         const disparador = "estado";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, estado } = row;
+            const { didOwner, didEnvio, estado, didCliente } = row;
 
             for (const ejecutar of ejecutador) {
                 await executeQuery(connection, insertQuery, [
@@ -49,7 +49,8 @@ async function EnviarcdcEstado(didOwner) {
                     didEnvio,
                     ejecutar,
                     estado,
-                    disparador
+                    disparador,
+                    didCliente
                 ]);
             }
 
