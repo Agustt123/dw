@@ -42,9 +42,9 @@ async function corregirFechasHistorialTodasEmpresas() {
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
         const query = `
-          UPDATE sistema_menu_ng SET elim = '1' WHERE link LIKE  "FmenuShow('rut_geoEnvios',%" and carpeta ="geoEnvios"
-            
-        `;
+ALTER TABLE envios ADD INDEX(autofecha);
+`;
+
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
