@@ -37,43 +37,81 @@ async function buildAprocesosEstado(rows, connection) {
 
 
 // ---------- Builder para disparador = 'asignaciones' ----------
-async function buildAprocesosAsignaciones(conn, rows) {
-    for (const row of rows) {
-        const Ow = row.didOwner;
-        const Cli = row.didCliente || 0;
-        const Cho = row.didChofer || 0;          // Cho != 0 => asignación; Cho == 0 => desasignación
-        const envio = String(row.didPaquete);
-        if (!Ow) continue;
+async function aplicarAprocesosAHommeApp(conn) {
+    for (const owner in Aprocesos) {
+        const porCliente = Aprocesos[owner];
+        console.log("➡️ Owner:", owner);
 
-        if (!Aprocesos[Ow]) Aprocesos[Ow] = {};
+        for (const cliente in porCliente) {
+            const porChofer = porCliente[cliente];
+            console.log("  ↪️ Cliente:", cliente);
 
-        if (!Aprocesos[Ow][Cli]) Aprocesos[Ow][Cli] = {};
-        if (!Aprocesos[Ow][Cli][0]) Aprocesos[Ow][Cli][0] = { 1: [], 0: [] };
-        if (!Aprocesos[Ow][Cli][Cho]) Aprocesos[Ow][Cli][Cho] = { 1: [], 0: [] };
+            for (const chofer in porChofer) {
+                const nodo = porChofer[chofer];
+                const pos = [...new Set(nodo[1])];
+                const neg = [...new Set(nodo[0])];
 
-        if (Cho !== 0) {
-            Aprocesos[Ow][Cli][Cho][1].push(envio);            // chofer actual (+)
-        }
-        // DESASIGNACIÓN → SOLO - en (Cli,choferAnterior real). NO tocar agregados.
-        const qChoferAnterior = `
-        SELECT operador AS didChofer
-        FROM asignaciones
-        WHERE didEnvio = ? AND didOwner = ? AND operador IS NOT NULL
-        ORDER BY id DESC
-        LIMIT 1
-      `;
-        const prev = await executeQuery(conn, qChoferAnterior, [envio, Ow]);
-        if (prev.length) {
-            const choPrev = prev[0].didChofer || 0;
-            if (choPrev !== 0) {
-                if (!Aprocesos[Ow][Cli][choPrev]) Aprocesos[Ow][Cli][choPrev] = { 1: [], 0: [] };
-                Aprocesos[Ow][Cli][choPrev][0].push(envio);     // negativo SOLO en chofer anterior
+                if (pos.length === 0 && neg.length === 0) continue;
+
+                // 🔁 Cambiar fecha=CURDATE() -> dia=CURDATE()
+                const sel = `
+          SELECT didsPaquete, pendientes
+          FROM home_app
+          WHERE didOwner = ? AND didCliente = ? AND didChofer = ? AND dia = CURDATE()
+          LIMIT 1
+        `;
+                const actual = await executeQuery(conn, sel, [owner, cliente, chofer]);
+
+                let paquetes = new Set();
+                let pendientes = 0;
+                if (actual.length > 0) {
+                    const s = actual[0].didsPaquete || "";
+                    if (s) for (const p of s.split(",")) { const t = p.trim(); if (t) paquetes.add(t); }
+                    pendientes = actual[0].pendientes || 0;
+                }
+
+                for (const p of pos) {
+                    const k = String(p);
+                    if (!paquetes.has(k)) { paquetes.add(k); pendientes += 1; }
+                }
+                for (const p of neg) {
+                    const k = String(p);
+                    if (paquetes.has(k)) { paquetes.delete(k); pendientes = Math.max(0, pendientes - 1); }
+                }
+
+                const didsPaqueteStr = Array.from(paquetes).join(",");
+
+                if (actual.length > 0) {
+                    // 🔁 Cambiar WHERE fecha=CURDATE() -> dia=CURDATE()
+                    const upd = `
+            UPDATE home_app
+            SET didsPaquete = ?, pendientes = ?, autofecha = NOW()
+            WHERE didOwner = ? AND didCliente = ? AND didChofer = ? AND dia = CURDATE()
+          `;
+                    await executeQuery(conn, upd, [didsPaqueteStr, pendientes, owner, cliente, chofer]);
+                } else {
+                    // 🔁 Incluir 'dia' y setear CURDATE() (dejé fecha por si la usás como timestamp)
+                    const ins = `
+            INSERT INTO home_app
+              (didOwner, didCliente, didChofer, didsPaquete, fecha, dia, pendientes)
+            VALUES
+              (?, ?, ?, ?, NOW(), CURDATE(), ?)
+          `;
+                    await executeQuery(conn, ins, [owner, cliente, chofer, didsPaqueteStr, pendientes]);
+                }
             }
         }
-
-        idsProcesados.push(row.id);
     }
-    return Aprocesos;
+
+    if (idsProcesados.length > 0) {
+        const CHUNK = 1000;
+        for (let i = 0; i < idsProcesados.length; i += CHUNK) {
+            const slice = idsProcesados.slice(i, i + CHUNK);
+            const updCdc = `UPDATE cdc SET procesado = 1 WHERE id IN (${slice.map(() => '?').join(',')})`;
+            await executeQuery(conn, updCdc, slice);
+            console.log("✅ CDC marcado como procesado para", slice.length, "rows");
+        }
+    }
 }
 
 
