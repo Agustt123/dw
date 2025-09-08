@@ -67,7 +67,12 @@ async function EnviarcdcEstado(didOwner) {
                 ]);
             }
 
-            await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+
+            if (result.affectedRows === 0) {
+                console.log(`ℹ️ No se pudo actualizar el estado para el didEnvio ${didEnvio}`);
+                continue;
+            }
 
             console.log(`✅ CDC insertado x${ejecutador.length} y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }

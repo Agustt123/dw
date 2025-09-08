@@ -46,8 +46,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
         if (!Ow) continue;
 
         if (!Aprocesos[Ow]) Aprocesos[Ow] = {};
-        if (!Aprocesos[Ow][0]) Aprocesos[Ow][0] = {};
-        if (!Aprocesos[Ow][0][0]) Aprocesos[Ow][0][0] = { 1: [], 0: [] }; // owner agregado (solo +)
+
         if (!Aprocesos[Ow][Cli]) Aprocesos[Ow][Cli] = {};
         if (!Aprocesos[Ow][Cli][0]) Aprocesos[Ow][Cli][0] = { 1: [], 0: [] };
         if (!Aprocesos[Ow][Cli][Cho]) Aprocesos[Ow][Cli][Cho] = { 1: [], 0: [] };
@@ -201,7 +200,7 @@ async function pendientesHoy() {
         await buildAprocesosEstado(rowsEstado, conn);
 
         // Procesar ASIGNACIONES
-        await buildAprocesosAsignaciones(conn, rowsAsignaciones);
+        //   await buildAprocesosAsignaciones(conn, rowsAsignaciones);
         console.log("[asignaciones] Aprocesos:", JSON.stringify(Aprocesos, null, 2));
 
         console.log("idsProcesados:", idsProcesados);
@@ -212,7 +211,7 @@ async function pendientesHoy() {
         console.error("❌ Error batch:", err);
     }
 }
-
+pendientesHoy();
 
 module.exports = {
     pendientesHoy
