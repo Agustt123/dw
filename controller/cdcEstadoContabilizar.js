@@ -5,7 +5,7 @@ async function procesarCDC() {
         const connection = await getConnectionLocal(164);
 
         const rows = await executeQuery(connection, `
-            SELECT id, didOwner, didPaquete, disparador, data, autofecha, estado
+            SELECT id, didOwner, didPaquete, disparador, data, fecha, estado
             FROM cdc
             WHERE procesado = 0 AND disparador = "estado" AND ejecutar = "entregasHoy"
             LIMIT 20

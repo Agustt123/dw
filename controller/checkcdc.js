@@ -6,9 +6,9 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, estado
+            SELECT didOwner, didEnvio, estado,autofecha
             FROM estado 
-            WHERE cdc = 0 AND didOwner = ? AND didEnvio > 800000  
+            WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-08-22 00:00:00'
             LIMIT 50
         `;
 
@@ -21,8 +21,8 @@ async function EnviarcdcEstado(didOwner) {
 
         // Agregamos didCliente en el insert
         const insertQuery = `
-            INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente,fecha)
+            VALUES (?, ?, ?, ?, ?, ?,?)
         `;
 
         const updateQuery = `
@@ -63,7 +63,8 @@ async function EnviarcdcEstado(didOwner) {
                     ejecutar,
                     estado,
                     disparador,
-                    clienteInsertar
+                    clienteInsertar,
+                    row.autofecha
                 ]);
             }
 
@@ -105,7 +106,7 @@ async function EnviarcdAsignacion(didOwner) {
 
         // Ahora el insert incluye didCliente
         const insertQuery = `
-            INSERT IGNORE INTO cdc(didOwner, didPaquete, ejecutar, didChofer, autofecha, disparador, didCliente)
+            INSERT IGNORE INTO cdc(didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
             VALUES(?, ?, ?, ?, ?, ?, ?)
         `;
 
@@ -125,7 +126,7 @@ async function EnviarcdAsignacion(didOwner) {
         const canal = "asignaciones";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, autofecha } = row;
+            const { didOwner, didEnvio, operador, fecha } = row;
 
             // Obtener didCliente desde envios (igual que en EnviarcdcEstado)
             const getDidClienteQuery = `
@@ -145,9 +146,10 @@ async function EnviarcdAsignacion(didOwner) {
                     didEnvio,
                     disparador,
                     operador,
-                    autofecha,
+
                     canal,
-                    clienteInsertar
+                    clienteInsertar,
+                    fecha,
                 ]);
             }
 
