@@ -66,7 +66,7 @@ const PORT = 13000;
             } finally {
                 running = false;
             }
-        }, 5 * 60 * 1000);
+        }, 1 * 60 * 1000);
 
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
