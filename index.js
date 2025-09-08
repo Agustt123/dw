@@ -6,8 +6,6 @@ const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpr
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/checkcdc.js");
 const { pendientesHoy } = require("./controller/pendientes.js");
 
-
-
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
@@ -19,7 +17,6 @@ app.use(
     })
 );
 
-
 let empresasDB = null;
 
 async function actualizarEmpresas() {
@@ -30,9 +27,6 @@ async function actualizarEmpresas() {
         console.error("Error al actualizar empresas desde Redis:", error);
     }
 }
-
-
-
 
 app.get("/", (req, res) => {
     res.status(200).json({
@@ -46,23 +40,38 @@ const PORT = 13000;
 (async () => {
     try {
         await actualizarEmpresas();
-        await sincronizarEnviosParaTodasLasEmpresas2();
 
+        // ⬇️⬇️⬇️ CAMBIO CLAVE: no await a la función con while(true)
+        sincronizarEnviosParaTodasLasEmpresas2(); // 🔸 corre en paralelo, no bloquea el arranque
+
+        // Primera corrida inmediata
         await EnviarcdAsignacion(164);
         await EnviarcdcEstado(164);
         await pendientesHoy();
-        // Actualizar empresas cada 10 minutos
+
+        // Loop cada 5 min con lock para evitar solapamientos
+        let running = false;
         setInterval(async () => {
-            await pendientesHoy();
-            await EnviarcdAsignacion(164);
-            await EnviarcdcEstado(164);
+            if (running) {
+                console.log("⏭️ Ciclo CDC/pendientes saltado: ya hay uno en curso");
+                return;
+            }
+            running = true;
+            try {
+                await EnviarcdAsignacion(164);
+                await EnviarcdcEstado(164);
+                await pendientesHoy();
+                console.log("✅ Ciclo CDC/pendientes completado");
+            } catch (e) {
+                console.error("❌ Error en ciclo CDC/pendientes:", e);
+            } finally {
+                running = false;
+            }
         }, 5 * 60 * 1000);
 
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
         });
-        //   console.log(empresasDB, "empresasDB");
-
 
         process.on("SIGINT", async () => {
             console.log("Cerrando servidor...");
