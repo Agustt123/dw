@@ -185,6 +185,8 @@ async function aplicarAprocesosAHommeApp(conn) {
             console.log("✅ CDC marcado como procesado para", slice.length, "rows");
         }
     }
+    console.log("🎉 Proceso completado.");
+
 }
 
 

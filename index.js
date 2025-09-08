@@ -53,9 +53,9 @@ const PORT = 13000;
         await pendientesHoy();
         // Actualizar empresas cada 10 minutos
         setInterval(async () => {
+            await pendientesHoy();
             await EnviarcdAsignacion(164);
             await EnviarcdcEstado(164);
-            await pendientesHoy();
         }, 5 * 60 * 1000);
 
         app.listen(PORT, () => {
