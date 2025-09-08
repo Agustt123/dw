@@ -96,8 +96,6 @@ async function aplicarAprocesosAHommeApp(conn) {
                 const pos = [...new Set(nodo[1])]; // positivos
                 const neg = [...new Set(nodo[0])]; // negativos
 
-                //       console.log("    🔎 Chofer:", chofer, "Positivos:", pos.length, "Negativos:", neg.length);
-
                 if (pos.length === 0 && neg.length === 0) continue;
 
                 // leer estado actual de hoy
@@ -108,16 +106,11 @@ async function aplicarAprocesosAHommeApp(conn) {
           LIMIT 1
         `;
                 const actual = await executeQuery(conn, sel, [owner, cliente, chofer]);
-                //  console.log("      📂 Estado actual:", actual);
 
                 // parsear paquetes actuales a Set
                 let paquetes = new Set();
                 let pendientes = 0;
                 if (actual.length > 0) {
-
-
-
-                    // SEPARAR didsPaquete por comas y armar Set
                     const s = actual[0].didsPaquete || "";
                     if (s) {
                         for (const p of s.split(",")) {
@@ -128,15 +121,12 @@ async function aplicarAprocesosAHommeApp(conn) {
                     pendientes = actual[0].pendientes || 0;
                 }
 
-                //   console.log("      📦 Paquetes antes:", Array.from(paquetes), "Pendientes:", pendientes);
-
                 // aplicar positivos
                 for (const p of pos) {
                     const k = String(p);
                     if (!paquetes.has(k)) {
                         paquetes.add(k);
                         pendientes += 1;
-                        //       console.log(`        ➕ Agregado paquete ${k}`);
                     }
                 }
 
@@ -146,12 +136,10 @@ async function aplicarAprocesosAHommeApp(conn) {
                     if (paquetes.has(k)) {
                         paquetes.delete(k);
                         pendientes = Math.max(0, pendientes - 1);
-                        //    console.log(`        ➖ Quitado paquete ${k}`);
                     }
                 }
 
                 const didsPaqueteStr = Array.from(paquetes).join(",");
-                //   console.log("      ✅ Resultado final -> Paquetes:", didsPaqueteStr, "Pendientes:", pendientes);
 
                 if (actual.length > 0) {
                     const upd = `
@@ -160,7 +148,6 @@ async function aplicarAprocesosAHommeApp(conn) {
             WHERE didOwner = ? AND didCliente = ? AND didChofer = ? AND fecha = CURDATE()
           `;
                     await executeQuery(conn, upd, [didsPaqueteStr, pendientes, owner, cliente, chofer]);
-                    //  console.log("      🔄 UPDATE ejecutado para", owner, cliente, chofer);
                 } else {
                     const ins = `
             INSERT INTO home_app
@@ -169,7 +156,6 @@ async function aplicarAprocesosAHommeApp(conn) {
               (?, ?, ?, ?, CURDATE(), ? )
           `;
                     await executeQuery(conn, ins, [owner, cliente, chofer, didsPaqueteStr, pendientes]);
-                    //    console.log("      🆕 INSERT ejecutado para", owner, cliente, chofer);
                 }
             }
         }
@@ -180,18 +166,16 @@ async function aplicarAprocesosAHommeApp(conn) {
         const CHUNK = 1000;
         for (let i = 0; i < idsProcesados.length; i += CHUNK) {
             const slice = idsProcesados.slice(i, i + CHUNK);
-            const updCdc = `UPDATE cdc SET procesado = 1  AND fProcesado = NOW() WHERE id IN (${slice.map(() => '?').join(',')})`;
+            const updCdc = `UPDATE cdc SET procesado = 1 WHERE id IN (${slice.map(() => '?').join(',')})`;
             await executeQuery(conn, updCdc, slice);
             console.log("✅ CDC marcado como procesado para", slice.length, "rows");
         }
     }
-    console.log("🎉 Proceso completado.");
-
 }
 
 
 
-async function pendientesHoy() {
+async function main() {
     try {
         const conn = await getConnectionLocal();
         const LIMIT = 50;   // máximo a procesar
@@ -210,20 +194,15 @@ async function pendientesHoy() {
 
         const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
-        //  const toProcess = rows.length > LIMIT ? rows.slice(0, LIMIT) : rows;
-
-
         const rowsEstado = rows.filter(r => r.disparador === "estado");
         const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
 
         // Procesar ESTADO
         await buildAprocesosEstado(rowsEstado, conn);
-        //console.log("[estado] Aprocesos:", JSON.stringify(Aprocesos, null, 2));
 
         // Procesar ASIGNACIONES
         await buildAprocesosAsignaciones(conn, rowsAsignaciones);
         console.log("[asignaciones] Aprocesos:", JSON.stringify(Aprocesos, null, 2));
-
 
         console.log("idsProcesados:", idsProcesados);
 
@@ -235,8 +214,4 @@ async function pendientesHoy() {
 }
 
 
-pendientesHoy();
-
-module.exports = {
-    pendientesHoy,
-};
+main();
