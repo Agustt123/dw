@@ -42,14 +42,13 @@ const PORT = 13000;
         await actualizarEmpresas();
 
         // ⬇️⬇️⬇️ CAMBIO CLAVE: no await a la función con while(true)
-        sincronizarEnviosParaTodasLasEmpresas2(); // 🔸 corre en paralelo, no bloquea el arranque
+        // sincronizarEnviosParaTodasLasEmpresas2(); // 🔸 corre en paralelo, no bloquea el arranque
 
         // Primera corrida inmediata
         await EnviarcdAsignacion(164);
         await EnviarcdcEstado(164);
         await pendientesHoy();
 
-        // Loop cada 5 min con lock para evitar solapamientos
         let running = false;
         setInterval(async () => {
             if (running) {
