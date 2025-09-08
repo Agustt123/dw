@@ -175,7 +175,7 @@ async function aplicarAprocesosAHommeApp(conn) {
 
 
 
-async function main() {
+async function pendientesHoy() {
     try {
         const conn = await getConnectionLocal();
         const LIMIT = 50;   // máximo a procesar
@@ -214,4 +214,6 @@ async function main() {
 }
 
 
-main();
+module.exports = {
+    pendientesHoy
+};
