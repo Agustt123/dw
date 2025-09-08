@@ -40,16 +40,24 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-
         const query = `
-ALTER TABLE envios ADD INDEX(autofecha);
+CREATE TABLE IF NOT EXISTS camino_chofer (
+  id INT NOT NULL AUTO_INCREMENT,
+  fecha DATE NOT NULL,
+  didChofer INT NOT NULL,
+  dataCamino LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  quien INT(3) NOT NULL,
+  superado INT NOT NULL DEFAULT 0,
+  elim INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
 
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
-            if (didOwner == "275" || didOwner == "276") continue;
+            if (didOwner == "275" || didOwner == "276" || didOwner == "345") continue;
 
             // if (didOwner <= 276) continue;
 
@@ -67,6 +75,39 @@ ALTER TABLE envios ADD INDEX(autofecha);
         console.error("❌ Error general en corregirFechasHistorialTodasEmpresas:", err.message);
     }
 }
+async function actualizarIngresoAutomatico(didOwner) {
+    const sellerIds = [
+        274473795, 514006956, 78409777, 650441900, 288904545, 277435068,
+        256872671, 735692880, 433564012, 404622472, 617634017, 45290997,
+        50929990, 148545940, 37284960, 214472081, 84823381, 161946607,
+        78793078, 80873335, 1823613961, 1788465836, 97487586, 1940032990,
+        204129231, 58578515, 201367212, 58391878, 627497479, 2155601390,
+        211148642
+    ];
+
+    try {
+        const conn = await getConnection(didOwner);
+
+        // Armar placeholders dinámicos
+        const placeholders = sellerIds.map(() => '?').join(',');
+
+        const query = `
+            UPDATE clientes_cuentas
+            SET ingreso_automatico = 0
+            WHERE ML_id_vendedor IN (${placeholders} AND superado = 0 AND elim = 0)
+        `;
+
+        await executeQuery(conn, query, sellerIds);
+        await conn.release();
+
+        console.log(`✅ Actualizado ingreso_automatico = 0 para ${sellerIds.length} sellers en empresa ${didOwner}`);
+    } catch (err) {
+        console.error(`❌ Error actualizando empresa ${didOwner}:`, err.message);
+    }
+}
+
+
+
 async function main() {
     await corregirFechasHistorialTodasEmpresas();
 }

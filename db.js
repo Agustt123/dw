@@ -68,9 +68,9 @@ async function getConnection(idempresa) {
 }
 
 // --- Conexión local al DW (sin pool, se puede mantener)
-async function getConnectionLocal(idempresa) {
+async function getConnectionLocal() {
     try {
-        console.log("🔄 getConnectionLocal idempresa:", idempresa);
+
 
         const config = {
             host: "149.56.182.49",

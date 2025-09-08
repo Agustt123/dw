@@ -6,10 +6,10 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, estado,didCliente
-            FROM estado
-            WHERE cdc = 0 AND didOwner = ? and estado in (5,9,14)
-            LIMIT 5
+            SELECT didOwner, didEnvio, estado
+            FROM estado 
+            WHERE cdc = 0 AND didOwner = ? AND didEnvio > 800000  
+            LIMIT 50
         `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
@@ -19,9 +19,10 @@ async function EnviarcdcEstado(didOwner) {
             return;
         }
 
+        // Agregamos didCliente en el insert
         const insertQuery = `
-            INSERT INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador,didCliente)
-            VALUES (?, ?, ?, ?, ?,?)
+            INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente)
+            VALUES (?, ?, ?, ?, ?, ?)
         `;
 
         const updateQuery = `
@@ -35,48 +36,59 @@ async function EnviarcdcEstado(didOwner) {
             "enCaminosHoy",
             "entregadosHoy",
             "entregasHoy"
-
         ];
 
         const disparador = "estado";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, estado, didCliente } = row;
+            const { didOwner, didEnvio, estado } = row;
+
+            // Obtenemos didCliente para este didEnvio
+            const getDidClienteQuery = `
+                SELECT didCliente 
+                FROM envios 
+                WHERE didEnvio = ? AND didOwner = ? AND elim = 0 AND superado = 0 
+                LIMIT 1
+            `;
+            const rowsCliente = await executeQuery(connection, getDidClienteQuery, [didEnvio, didOwner]);
+            const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
             for (const ejecutar of ejecutador) {
+                // Si es pendientesHoy, agregamos didCliente, sino null
+                const clienteInsertar = (ejecutar === "pendientesHoy") ? didCliente : null;
+
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
                     ejecutar,
                     estado,
                     disparador,
-                    didCliente
+                    clienteInsertar
                 ]);
             }
 
-            await executeQuery(connection, updateQuery, [
-                didOwner,
-                didEnvio
-            ]);
+            await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
 
-            console.log(`✅ CDC insertado x5 y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            console.log(`✅ CDC insertado x${ejecutador.length} y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
-        console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}:`, error);
+        console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}: `, error);
     }
 }
 
 
+
+// Procesar CDC desde la tabla 'asignaciones'
 // Procesar CDC desde la tabla 'asignaciones'
 async function EnviarcdAsignacion(didOwner) {
     try {
-        const connection = await getConnectionLocal(didOwner); // Te recomiendo que uses el didOwner directamente aquí
+        const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, operador, autofecha,didCliente
+            SELECT didOwner, didEnvio, operador, autofecha
             FROM asignaciones
-            WHERE cdc = 0 AND didOwner = ?
-            LIMIT 5
+            WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-08-22 00:00:00'
+            LIMIT 500
         `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
@@ -86,9 +98,10 @@ async function EnviarcdAsignacion(didOwner) {
             return;
         }
 
+        // Ahora el insert incluye didCliente
         const insertQuery = `
-            INSERT INTO cdc (didOwner, didPaquete, ejecutar, didChofer, autofecha, disparadorm,didCliente)
-            VALUES (?, ?, ?, ?, ?, ?,?)
+            INSERT IGNORE INTO cdc(didOwner, didPaquete, ejecutar, didChofer, autofecha, disparador, didCliente)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
         `;
 
         const updateQuery = `
@@ -102,15 +115,26 @@ async function EnviarcdAsignacion(didOwner) {
             "enCaminosHoy",
             "entregadosHoy",
             "entregasHoy"
-
         ];
 
         const canal = "asignaciones";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, autofecha, didCliente } = row;
+            const { didOwner, didEnvio, operador, autofecha } = row;
+
+            // Obtener didCliente desde envios (igual que en EnviarcdcEstado)
+            const getDidClienteQuery = `
+                SELECT didCliente
+                FROM envios
+                WHERE didEnvio = ? AND didOwner = ? AND elim = 0 AND superado = 0
+                LIMIT 1
+            `;
+            const rowsCliente = await executeQuery(connection, getDidClienteQuery, [didEnvio, didOwner]);
+            const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
             for (const disparador of disparadores) {
+                const clienteInsertar = (disparador === "pendientesHoy") ? didCliente : null;
+
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
@@ -118,28 +142,27 @@ async function EnviarcdAsignacion(didOwner) {
                     operador,
                     autofecha,
                     canal,
-                    didCliente
+                    clienteInsertar
                 ]);
             }
 
-            await executeQuery(connection, updateQuery, [
-                didOwner,
-                didEnvio
-            ]);
+            await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
 
-            console.log(`✅ CDC insertado x5 y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            console.log(`✅ CDC insertado x${disparadores.length} y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
-        console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}:`, error);
+        console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}: `, error);
     }
 }
 
 
 (async () => {
+    //    await EnviarcdcEstado(164);
     await EnviarcdAsignacion(164);
+    await EnviarcdAsignacion(154);
 })();
 
 module.exports = {
-    // EnviarcdcEstado,
-    //EnviarcdAgisnacion
+    EnviarcdcEstado,
+    EnviarcdAsignacion
 };

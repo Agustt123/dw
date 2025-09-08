@@ -3,6 +3,8 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const { redisClient, getFromRedis } = require("./db.js");
 const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpresas2 } = require("./controller/controllerEnvio.js");
+const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/checkcdc.js");
+const { pendientesHoy } = require("./controller/pendientes.js");
 
 
 
@@ -45,6 +47,16 @@ const PORT = 13000;
     try {
         await actualizarEmpresas();
         await sincronizarEnviosParaTodasLasEmpresas2();
+
+        await EnviarcdAsignacion(164);
+        await EnviarcdcEstado(164);
+        await pendientesHoy();
+        // Actualizar empresas cada 10 minutos
+        setInterval(async () => {
+            await EnviarcdAsignacion(164);
+            await EnviarcdcEstado(164);
+            await pendientesHoy();
+        }, 5 * 60 * 1000);
 
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
