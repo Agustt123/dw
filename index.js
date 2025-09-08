@@ -42,11 +42,11 @@ const PORT = 13000;
         await actualizarEmpresas();
 
         // ⬇️⬇️⬇️ CAMBIO CLAVE: no await a la función con while(true)
-        // sincronizarEnviosParaTodasLasEmpresas2(); // 🔸 corre en paralelo, no bloquea el arranque
+        sincronizarEnviosParaTodasLasEmpresas2(); // 🔸 corre en paralelo, no bloquea el arranque
 
         // Primera corrida inmediata
-        // await EnviarcdAsignacion(164);
-        //  await EnviarcdcEstado(164);
+        await EnviarcdAsignacion(164);
+        await EnviarcdcEstado(164);
         await pendientesHoy();
 
         let running = false;
@@ -57,8 +57,8 @@ const PORT = 13000;
             }
             running = true;
             try {
-                // await EnviarcdAsignacion(164);
-                // await EnviarcdcEstado(164);
+                await EnviarcdAsignacion(164);
+                await EnviarcdcEstado(164);
                 await pendientesHoy();
                 console.log("✅ Ciclo CDC/pendientes completado");
             } catch (e) {

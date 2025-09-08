@@ -186,7 +186,7 @@ async function pendientesHoy() {
       FROM cdc
       WHERE procesado = 0
         AND ejecutar   = "pendientesHoy"
-        AND disparador IN ("estado")
+        
         AND didCliente IS NOT NULL
       ORDER BY id ASC
       LIMIT ?
@@ -201,7 +201,7 @@ async function pendientesHoy() {
         await buildAprocesosEstado(rowsEstado, conn);
 
         // Procesar ASIGNACIONES
-        //   await buildAprocesosAsignaciones(conn, rowsAsignaciones);
+        await buildAprocesosAsignaciones(conn, rowsAsignaciones);
         console.log("[asignaciones] Aprocesos:", JSON.stringify(Aprocesos, null, 2));
 
         console.log("idsProcesados:", idsProcesados);
