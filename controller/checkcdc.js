@@ -161,12 +161,6 @@ async function EnviarcdAsignacion(didOwner) {
 }
 
 
-(async () => {
-    //    await EnviarcdcEstado(164);
-    await EnviarcdAsignacion(164);
-    await EnviarcdAsignacion(164);
-})();
-
 module.exports = {
     EnviarcdcEstado,
     EnviarcdAsignacion
