@@ -178,7 +178,7 @@ async function pendientesHoy() {
     try {
         const conn = await getConnectionLocal();
         const LIMIT = 50;   // máximo a procesar
-        const FETCH = 100;  // cuánto traigo de cdc por batch
+        const FETCH = 1000;  // cuánto traigo de cdc por batch
 
         // Un solo SELECT, luego despachamos por disparador
         const selectCDC = `
