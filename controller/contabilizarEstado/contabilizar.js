@@ -1,4 +1,4 @@
-const { getConnectionLocal, executeQuery } = require("../db");
+const { getConnectionLocal, executeQuery } = require("../../db");
 const cron = require("node-cron");
 
 // Utilidad para obtener la fecha de "ayer" en horario de Argentina
