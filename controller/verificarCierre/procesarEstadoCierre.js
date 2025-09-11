@@ -1,4 +1,4 @@
-const { getConnectionLocal, executeQuery } = require("../db");
+const { getConnectionLocal, executeQuery } = require("../../db");
 
 
 

@@ -1,4 +1,4 @@
-const { getConnectionLocal, executeQuery } = require("../db.js");
+const { getConnectionLocal, executeQuery } = require("../../db.js");
 
 // Procesar CDC desde la tabla 'envios'
 async function EnviarcdcEstado(didOwner) {
@@ -86,16 +86,17 @@ async function EnviarcdcEstado(didOwner) {
 
 // Procesar CDC desde la tabla 'asignaciones'
 // Procesar CDC desde la tabla 'asignaciones'
+// Procesar CDC desde la tabla 'asignaciones'
 async function EnviarcdAsignacion(didOwner) {
     try {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, operador, autofecha
-            FROM asignaciones
-            WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-08-22 00:00:00'
-            LIMIT 500
-        `;
+      SELECT didOwner, didEnvio, operador, autofecha
+      FROM asignaciones
+      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-08-22 00:00:00'
+      LIMIT 500
+    `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
 
@@ -104,17 +105,18 @@ async function EnviarcdAsignacion(didOwner) {
             return;
         }
 
-        // Ahora el insert incluye didCliente
+        // Orden de columnas -> ¡importante mantenerlo!
         const insertQuery = `
-            INSERT IGNORE INTO cdc(didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
-        `;
+      INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
 
         const updateQuery = `
-            UPDATE asignaciones SET cdc = 1 WHERE didOwner = ? AND didEnvio = ?
-        `;
+      UPDATE asignaciones SET cdc = 1
+      WHERE didOwner = ? AND didEnvio = ?
+    `;
 
-        const disparadores = [
+        const ejecutadores = [
             "asignacionesHoy",
             "pendientesHoy",
             "cerradosHoy",
@@ -123,44 +125,46 @@ async function EnviarcdAsignacion(didOwner) {
             "entregasHoy"
         ];
 
-        const canal = "asignaciones";
+        const disparador = "asignaciones"; // este es el canal/disparador correcto
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, fecha } = row;
+            const { didOwner, didEnvio, operador, autofecha } = row;
 
-            // Obtener didCliente desde envios (igual que en EnviarcdcEstado)
+            // Traer didCliente (opcionalmente lo usás solo para pendientesHoy)
             const getDidClienteQuery = `
-                SELECT didCliente
-                FROM envios
-                WHERE didEnvio = ? AND didOwner = ? AND elim = 0 AND superado = 0
-                LIMIT 1
-            `;
+        SELECT didCliente
+        FROM envios
+        WHERE didEnvio = ? AND didOwner = ? AND elim = 0 AND superado = 0
+        LIMIT 1
+      `;
             const rowsCliente = await executeQuery(connection, getDidClienteQuery, [didEnvio, didOwner]);
             const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
-            for (const disparador of disparadores) {
-                const clienteInsertar = (disparador === "pendientesHoy") ? didCliente : null;
+            for (const ejecutar of ejecutadores) {
+                const clienteInsertar = (ejecutar === "pendientesHoy") ? didCliente : null;
 
+                // Mantener el MISMO orden que el INSERT:
+                // (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
-                    disparador,
+                    ejecutar,
                     operador,
-
-                    canal,
-                    clienteInsertar,
-                    fecha,
+                    autofecha,       // <-- antes estabas pasando "canal" acá
+                    disparador,      // <-- acá va 'asignaciones'
+                    clienteInsertar  // <-- y acá el didCliente (o null)
                 ]);
             }
 
             await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
 
-            console.log(`✅ CDC insertado x${disparadores.length} y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            console.log(`✅ CDC insertado x${ejecutadores.length} y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}: `, error);
     }
 }
+
 
 
 module.exports = {

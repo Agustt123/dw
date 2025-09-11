@@ -3,8 +3,8 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const { redisClient, getFromRedis } = require("./db.js");
 const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpresas2 } = require("./controller/controllerEnvio.js");
-const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/checkcdc.js");
-const { pendientesHoy } = require("./controller/pendientes.js");
+const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc.js");
+const { pendientesHoy } = require("./controller/pendientesHoy/pendientes.js");
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));

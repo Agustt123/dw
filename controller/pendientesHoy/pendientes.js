@@ -1,4 +1,4 @@
-const { executeQuery, getConnectionLocal } = require("../db");
+const { executeQuery, getConnectionLocal } = require("../../db");
 
 const Aprocesos = {};
 const idsProcesados = [];
