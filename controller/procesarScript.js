@@ -41,16 +41,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-CREATE TABLE IF NOT EXISTS camino_chofer (
-  id INT NOT NULL AUTO_INCREMENT,
-  fecha DATE NOT NULL,
-  didChofer INT NOT NULL,
-  dataCamino LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  quien INT(3) NOT NULL,
-  superado INT NOT NULL DEFAULT 0,
-  elim INT NOT NULL DEFAULT 0,
-  PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+ALTER TABLE envios CHANGE estado estado INT NOT NULL COMMENT
 `;
 
 
