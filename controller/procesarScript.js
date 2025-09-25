@@ -40,9 +40,7 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-        const query = `
-ALTER TABLE envios CHANGE estado estado INT NOT NULL COMMENT
-`;
+        const query = "ALTER TABLE `envios` MODIFY COLUMN `estado` INT NOT NULL";
 
 
         for (const didOwnerStr of didOwners) {
