@@ -4,7 +4,7 @@ const cors = require("cors");
 const { redisClient, getFromRedis } = require("./db.js");
 const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpresas2 } = require("./controller/controllerEnvio.js");
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
-const { homeAppHoy } = require("./controller/pendientesHoy/pendientes2.js");
+const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
@@ -47,7 +47,7 @@ const PORT = 13000;
         // Primera corrida inmediata
         await EnviarcdAsignacion(164);
         await EnviarcdcEstado(164);
-        homeAppHoy();
+        pendientesHoy();
         let running = false;
         setInterval(async () => {
             if (running) {
@@ -58,7 +58,7 @@ const PORT = 13000;
             try {
                 await EnviarcdAsignacion(164);
                 await EnviarcdcEstado(164);
-                homeAppHoy();
+                pendientesHoy();
                 console.log("✅ Ciclo CDC/pendientes completado");
             } catch (e) {
                 console.error("❌ Error en ciclo CDC/pendientes:", e);
