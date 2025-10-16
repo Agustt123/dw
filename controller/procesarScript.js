@@ -40,7 +40,7 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-        const query = "ALTER TABLE `envios` MODIFY COLUMN `estado` INT NOT NULL";
+        const query = "ALTER TABLE `sistema_usuarios_accesos` ADD `clientesAtrabajar` TEXT NOT NULL AFTER `driveridflex`;";
 
 
         for (const didOwnerStr of didOwners) {
