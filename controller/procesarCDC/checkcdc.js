@@ -145,7 +145,7 @@ async function EnviarcdAsignacion(didOwner) {
             const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
             for (const ejecutar of ejecutadores) {
-                const clienteInsertar = (ejecutar === "pendientesHoy") ? didCliente : null;
+                const clienteInsertar = (ejecutar === "estado") ? didCliente : null;
 
                 // Mantener el MISMO orden que el INSERT:
                 // (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)

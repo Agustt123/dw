@@ -82,13 +82,13 @@ async function EnviarcdAsignacion(didOwner) {
     try {
         const connection = await getConnectionLocal(didOwner);
 
+        // traigo estado desde asignaciones (si tu tabla no lo tiene, lo podés resolver por fecha)
         const selectQuery = `
-      SELECT didOwner, didEnvio, operador, autofecha
+      SELECT didOwner, didEnvio, operador, autofecha, estado
       FROM asignaciones
       WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
       LIMIT 500
     `;
-
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
 
         if (rows.length === 0) {
@@ -96,11 +96,12 @@ async function EnviarcdAsignacion(didOwner) {
             return;
         }
 
-        // Inserta en CDC (acá NO hay columna 'estado' en el INSERT de asignaciones)
-        // Orden columnas: (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
+        // AHORA sí: 8 columnas y 8 placeholders
         const insertQuery = `
-      INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT IGNORE INTO cdc
+        (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente, estado)
+      VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
         const updateQuery = `
@@ -108,14 +109,13 @@ async function EnviarcdAsignacion(didOwner) {
       WHERE didOwner = ? AND didEnvio = ?
     `;
 
-        // Solo estos dos ejecutores (los demás pasan a 'estado')
         const ejecutadores = ["verificarCierre", "estado"];
         const disparador = "asignaciones";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, autofecha } = row;
+            const { didOwner, didEnvio, operador, autofecha, estado } = row;
 
-            // didCliente solo se pasa cuando ejecutar = 'estado' (según tu pedido)
+            // didCliente solo cuando ejecutar = 'estado'
             const getDidClienteQuery = `
         SELECT didCliente
         FROM envios
@@ -125,17 +125,21 @@ async function EnviarcdAsignacion(didOwner) {
             const rowsCliente = await executeQuery(connection, getDidClienteQuery, [didEnvio, didOwner]);
             const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
+            // si tu tabla 'asignaciones' no tiene 'estado', podés setearlo a NULL o resolverlo por fecha
+            const valorEstado = (estado !== undefined) ? estado : null;
+
             for (const ejecutar of ejecutadores) {
                 const clienteInsertar = (ejecutar === "estado") ? didCliente : null;
 
                 await executeQuery(connection, insertQuery, [
-                    didOwner,
-                    didEnvio,
-                    ejecutar,      // 'verificarCierre' o 'estado'
-                    operador,      // didChofer (puede ser null/0)
-                    autofecha,
-                    disparador,    // 'asignaciones'
-                    clienteInsertar
+                    didOwner,           // didOwner
+                    didEnvio,           // didPaquete
+                    ejecutar,           // 'verificarCierre' o 'estado'
+                    operador || 0,      // didChofer
+                    autofecha,          // fecha
+                    disparador,         // 'asignaciones'
+                    clienteInsertar,    // didCliente (solo para ejecutar='estado')
+                    valorEstado         // estado (NUM o NULL)
                 ]);
             }
 
@@ -147,7 +151,6 @@ async function EnviarcdAsignacion(didOwner) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}: `, error);
     }
 }
-
 
 
 
