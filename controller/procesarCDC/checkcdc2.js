@@ -10,7 +10,7 @@ async function EnviarcdcEstado(didOwner) {
         const selectQuery = `
       SELECT didOwner, didEnvio, estado, autofecha
       FROM estado
-      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-08-22 00:00:00'
+      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
       LIMIT 50
     `;
 
@@ -59,10 +59,10 @@ async function EnviarcdcEstado(didOwner) {
                     disparador,
                     clienteInsertar,
                     autofecha
-                ]);
+                ], true);
             }
 
-            const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio], true);
             if (result.affectedRows === 0) {
                 console.log(`ℹ️ No se pudo actualizar el estado para el didEnvio ${didEnvio}`);
                 continue;
@@ -85,7 +85,7 @@ async function EnviarcdAsignacion(didOwner) {
         const selectQuery = `
       SELECT didOwner, didEnvio, operador, autofecha
       FROM asignaciones
-      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-08-22 00:00:00'
+      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
       LIMIT 500
     `;
 
@@ -147,6 +147,9 @@ async function EnviarcdAsignacion(didOwner) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}: `, error);
     }
 }
+
+
+
 
 module.exports = {
     EnviarcdcEstado,

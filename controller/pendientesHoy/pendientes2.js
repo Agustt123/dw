@@ -19,19 +19,11 @@ function choferBucketEstado(estadoNum) {
   return -(1000 + n); // p.ej. E5 => -1005
 }
 
-// --- Util: obtener valor de estado del evento 'estado' ---
-// Si la fila CDC ya trae 'estado', lo usa; si no, lo busca por tabla 'estado' usando el id
-async function getEstadoValor(conn, row) {
+// --- Util: obtener valor de estado desde CDC (simple y directo) ---
+async function getEstadoValorDesdeCDC(_conn, row) {
+  // CDC trae la columna 'estado'
   if (row.estado !== undefined && row.estado !== null) return row.estado;
-  // fallback: buscar por tabla estado, asumiendo que cdc.id referencia el id del evento en 'estado'
-  const q = `
-    SELECT estado
-    FROM estado
-    WHERE id = ? AND didEnvio = ? AND didOwner = ?
-    LIMIT 1
-  `;
-  const rs = await executeQuery(conn, q, [row.id, row.didPaquete, row.didOwner]);
-  return rs.length ? rs[0].estado : null;
+  return null; // si no vino, no forcemos a buscar; lo logueamos y seguimos
 }
 
 // ---------- Builder para disparador = 'estado' (HISTÓRICO ACUMULATIVO) ----------
@@ -41,14 +33,13 @@ async function buildAprocesosEstado(rows, connection) {
     const CLI = row.didCliente ?? 0;
     if (!OW) continue;
 
-    // ✅ Ya no descartamos si hubo estado previo (histórico acumulativo)
     // 🔸 agrupar por día del evento (cdc.fecha)
     const dia = getDiaFromTS(row.fecha);
 
-    // valor de estado
-    const valorEstado = await getEstadoValor(connection, row);
+    // valor de estado (desde cdc)
+    const valorEstado = await getEstadoValorDesdeCDC(connection, row);
     if (valorEstado === null || valorEstado === undefined) {
-      // si no lo puedo determinar, lo salto para no contaminar
+      console.warn(`⚠️  CDC sin estado → cdc.id=${row.id} didEnvio=${row.didPaquete} fecha=${row.fecha}`);
       continue;
     }
 
@@ -56,25 +47,25 @@ async function buildAprocesosEstado(rows, connection) {
     const CHO_EST = choferBucketEstado(valorEstado);
     const envio = String(row.didPaquete);
 
-    // Nivel agregado por owner/cliente/estado/día
+    // Nivel agregado por owner/cliente/estado/día (histórico: SOLO positivos)
     if (!Aprocesos[OW]) Aprocesos[OW] = {};
     if (!Aprocesos[OW][CLI]) Aprocesos[OW][CLI] = {};
     if (!Aprocesos[OW][CLI][CHO_EST]) Aprocesos[OW][CLI][CHO_EST] = {};
     if (!Aprocesos[OW][CLI][CHO_EST][dia]) Aprocesos[OW][CLI][CHO_EST][dia] = { 1: [], 0: [] };
-    Aprocesos[OW][CLI][CHO_EST][dia][1].push(envio); // ✅ SOLO positivo (histórico)
+    Aprocesos[OW][CLI][CHO_EST][dia][1].push(envio);
 
     // (Opcional) agregado global por owner/estado
     if (!Aprocesos[OW][0]) Aprocesos[OW][0] = {};
     if (!Aprocesos[OW][0][CHO_EST]) Aprocesos[OW][0][CHO_EST] = {};
     if (!Aprocesos[OW][0][CHO_EST][dia]) Aprocesos[OW][0][CHO_EST][dia] = { 1: [], 0: [] };
-    Aprocesos[OW][0][CHO_EST][dia][1].push(envio); // ✅ SOLO positivo
+    Aprocesos[OW][0][CHO_EST][dia][1].push(envio);
 
     idsProcesados.push(row.id);
   }
   return Aprocesos;
 }
 
-// ---------- Builder para disparador = 'asignaciones' (SIN CAMBIOS LÓGICOS) ----------
+// ---------- Builder para disparador = 'asignaciones' (como lo tenías) ----------
 async function buildAprocesosAsignaciones(conn, rows) {
   for (const row of rows) {
     const Ow = row.didOwner;
@@ -96,7 +87,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
       Aprocesos[Ow][Cli][Cho][dia][1].push(envio); // chofer actual (+)
     }
 
-    // DESASIGNACIÓN → SOLO - en (Cli,choferAnterior real). NO tocar agregados.
+    // DESASIGNACIÓN → SOLO - en (Cli, choferAnterior real). NO tocar agregados.
     const qChoferAnterior = `
       SELECT operador AS didChofer
       FROM asignaciones
@@ -145,7 +136,7 @@ async function aplicarAprocesosAHommeApp(conn) {
             WHERE didOwner = ? AND didCliente = ? AND didChofer = ? AND dia = ?
             LIMIT 1
           `;
-          const actual = await executeQuery(conn, sel, [owner, cliente, chofer, dia]);
+          const actual = await executeQuery(conn, sel, [owner, cliente, chofer, dia], true);
 
           // parsear paquetes actuales a Set
           let paquetes = new Set();
@@ -217,30 +208,31 @@ async function aplicarAprocesosAHommeApp(conn) {
 async function pendientesHoy() {
   try {
     const conn = await getConnectionLocal();
-    const LIMIT = 50;    // máximo a procesar
     const FETCH = 1000;  // cuánto traigo de cdc por batch
 
-    // 🔸 Traigo fecha desde cdc (día del evento)
+    // 🔸 Traigo desde cdc (INCLUYE 'estado'!)
     const selectCDC = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, disparador, ejecutar, fecha
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, disparador, ejecutar, fecha, estado
       FROM cdc
       WHERE procesado = 0
-        AND ejecutar   = "pendientesHoy"
+        AND ejecutar   = "estado"
         AND didCliente IS NOT NULL
       ORDER BY id ASC
       LIMIT ?
     `;
 
-    const rows = await executeQuery(conn, selectCDC, [FETCH]);
+    const rows = await executeQuery(conn, selectCDC, [FETCH], true);
 
+    // Particiono por disparador (por si a futuro traés asignaciones en otro query)
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
 
     // Procesar ESTADO (histórico acumulativo)
     await buildAprocesosEstado(rowsEstado, conn);
 
-    // Procesar ASIGNACIONES (foto operativa por chofer)
+    // Procesar ASIGNACIONES (foto operativa por chofer) — hoy rowsAsignaciones va a estar vacío con este filtro
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
+
     console.log("[Aprocesos] =>", JSON.stringify(Aprocesos, null, 2));
     console.log("idsProcesados:", idsProcesados);
 

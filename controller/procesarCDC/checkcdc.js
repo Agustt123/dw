@@ -8,7 +8,7 @@ async function EnviarcdcEstado(didOwner) {
         const selectQuery = `
             SELECT didOwner, didEnvio, estado,autofecha
             FROM estado 
-            WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-08-22 00:00:00'
+            WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-10-10 00:00:00'
             LIMIT 50
         `;
 
@@ -21,7 +21,7 @@ async function EnviarcdcEstado(didOwner) {
 
         // Agregamos didCliente en el insert
         const insertQuery = `
-            INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente,fecha)
+            INSERT  INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente,fecha)
             VALUES (?, ?, ?, ?, ?, ?,?)
         `;
 
@@ -39,10 +39,12 @@ async function EnviarcdcEstado(didOwner) {
         ];
 
         const disparador = "estado";
+        console.log("entramosss1");
+
 
         for (const row of rows) {
             const { didOwner, didEnvio, estado } = row;
-
+            console.log("entramosss2");
             // Obtenemos didCliente para este didEnvio
             const getDidClienteQuery = `
                 SELECT didCliente 
@@ -54,6 +56,7 @@ async function EnviarcdcEstado(didOwner) {
             const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
             for (const ejecutar of ejecutador) {
+                console.log("entramosss3");
                 // Si es pendientesHoy, agregamos didCliente, sino null
                 const clienteInsertar = (ejecutar === "pendientesHoy") ? didCliente : null;
 
@@ -65,10 +68,11 @@ async function EnviarcdcEstado(didOwner) {
                     disparador,
                     clienteInsertar,
                     row.autofecha
-                ]);
+                ], true);
             }
 
             const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            console.log("entramosss4");
 
             if (result.affectedRows === 0) {
                 console.log(`ℹ️ No se pudo actualizar el estado para el didEnvio ${didEnvio}`);
@@ -107,7 +111,7 @@ async function EnviarcdAsignacion(didOwner) {
 
         // Orden de columnas -> ¡importante mantenerlo!
         const insertQuery = `
-      INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
+      INSERT  INTO cdc (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
