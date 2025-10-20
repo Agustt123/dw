@@ -1,11 +1,10 @@
 const { executeQuery, getConnectionLocal } = require("../../db");
 
-// Acumuladores
-// HISTORIAL (chofer=0): owner -> cliente -> estado -> dia -> Set(paquetes)
-const AEstados = {};
-// FOTO por chofer: owner -> cliente -> chofer -> estado -> dia -> { add:Set, del:Set }
-const AChoferes = {};
+const Aprocesos = {};
 const idsProcesados = [];
+const LIMIT = 50;
+
+const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 
 const TZ = 'America/Argentina/Buenos_Aires';
 function getDiaFromTS(ts) {
@@ -21,259 +20,240 @@ const nEstado = v => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ===== helper global para AChoferes =====
-const ensure = (o, k) => (o[k] ??= {});
-function addNodeChofer(owner, cli, cho, est, day) {
-  ensure(AChoferes, owner);
-  ensure(AChoferes[owner], cli);
-  ensure(AChoferes[owner][cli], cho);
-  ensure(AChoferes[owner][cli][cho], est);
-  ensure(AChoferes[owner][cli][cho][est], day);
-  const cur = AChoferes[owner][cli][cho][est][day];
-  if (!cur.add) cur.add = new Set();
-  if (!cur.del) cur.del = new Set();
-  return cur;
+// ---------- helpers ----------
+function ensure(o, k) { return (o[k] ??= {}); }
+function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
+  ensure(Aprocesos, owner);
+  ensure(Aprocesos[owner], cli);
+  ensure(Aprocesos[owner][cli], cho);
+  ensure(Aprocesos[owner][cli][cho], est);
+  ensure(Aprocesos[owner][cli][cho][est], dia);
+  if (!Aprocesos[owner][cli][cho][est][dia][1]) Aprocesos[owner][cli][cho][est][dia][1] = [];
+  if (!Aprocesos[owner][cli][cho][est][dia][0]) Aprocesos[owner][cli][cho][est][dia][0] = [];
+  Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
 }
 
-/* =========================
-   BUILDERS
-   ========================= */
-
-// HISTORIAL por ESTADO (disparador='estado'): guardamos en chofer=0
-// además, total por owner (cliente=0)
-async function buildEstados(_conn, rowsEstado) {
-  for (const row of rowsEstado) {
+// ---------- Builder para disparador = 'estado' ----------
+async function buildAprocesosEstado(rows, connection) {
+  for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
     const EST = nEstado(row.estado);
     if (!OW || EST === null) continue;
 
+    // Evitar primer evento duplicado: si existe uno previo en 'estado', saltamos
+    const queryEstado = `
+      SELECT id FROM estado
+      WHERE didEnvio = ? AND didOwner = ? AND id < ?
+      ORDER BY id DESC LIMIT 1
+    `;
+    const estadoPrev = await executeQuery(connection, queryEstado, [row.didPaquete, OW, row.id]);
+    if (estadoPrev.length > 0) continue;
+
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
+    const CHO = row.didChofer ?? 0;
 
-    // owner / cliente / chofer=0 / estado / dia
-    if (!AEstados[OW]) AEstados[OW] = {};
-    if (!AEstados[OW][CLI]) AEstados[OW][CLI] = {};
-    if (!AEstados[OW][CLI][EST]) AEstados[OW][CLI][EST] = {};
-    if (!AEstados[OW][CLI][EST][dia]) AEstados[OW][CLI][EST][dia] = new Set();
-    AEstados[OW][CLI][EST][dia].add(envio);
+    // 1) Siempre cargar estado REAL en chofer=0
+    pushNodo(OW, 0, 0, EST, dia, 1, envio);
+    pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // owner / cliente=0 / chofer=0 / estado / dia  → total por owner
-    if (!AEstados[OW][0]) AEstados[OW][0] = {};
-    if (!AEstados[OW][0][EST]) AEstados[OW][0][EST] = {};
-    if (!AEstados[OW][0][EST][dia]) AEstados[OW][0][EST][dia] = new Set();
-    AEstados[OW][0][EST][dia].add(envio);
+    // 2) Si pertenece al conjunto, cargar TAMBIÉN como estado 69 en chofer=0
+    if (ESTADOS_69.has(EST)) {
+      pushNodo(OW, 0, 0, 69, dia, 1, envio);
+      pushNodo(OW, CLI, 0, 69, dia, 1, envio);
+    }
 
-    // >>> estado 0: también cargar en chofer vigente del CDC (sin buscar nada extra)
-    if (EST === 0) {
-      const CHO = row.didChofer ?? 0;
-      if (CHO !== 0) {
-        // por cliente específico
-        addNodeChofer(OW, CLI, CHO, EST, dia).add.add(envio);
-        // agregador por chofer con todos los clientes (cliente=0)
-        addNodeChofer(OW, 0, CHO, EST, dia).add.add(envio);
-      }
+    // 3) Si es estado 0 y viene chofer en el CDC: cargar por chofer en 0 y en 69
+    if (EST === 0 && CHO !== 0) {
+      // estado 0 (por chofer)
+      pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
+      pushNodo(OW, 0, CHO, 0, dia, 1, envio);
+      // estado 69 (por chofer combinado)
+      pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
+      pushNodo(OW, 0, CHO, 69, dia, 1, envio);
     }
 
     idsProcesados.push(row.id);
   }
+  return Aprocesos;
 }
 
-// FOTO por CHOFER (disparador='asignaciones'): + al chofer actual, - al chofer anterior
-// SIEMPRE usando el estado que viene en CDC (misma clave incluye estado)
-async function buildChoferes(conn, rowsAsign) {
-  for (const row of rowsAsign) {
+// ---------- Builder para disparador = 'asignaciones' ----------
+async function buildAprocesosAsignaciones(conn, rows) {
+  for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
-    const CHO = row.didChofer ?? 0;     // 0 = desasignación
-    const EST = nEstado(row.estado);
+    const CHO = row.didChofer ?? 0;  // CHO != 0 => asignación; CHO == 0 => desasignación
+    const EST = nEstado(row.estado); // viene desde CDC (asegurado en SELECT)
+    const envio = String(row.didPaquete);
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
-    const envio = String(row.didPaquete);
 
-    // + al chofer actual (si CHO != 0)
+    // + al chofer actual en el estado indicado
     if (CHO !== 0) {
-      addNodeChofer(OW, CLI, CHO, EST, dia).add.add(envio);
-      addNodeChofer(OW, 0, CHO, EST, dia).add.add(envio);
+      pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
+      pushNodo(OW, 0, CHO, EST, dia, 1, envio);
+
+      // si el estado pertenece al conjunto, también sumar en 69 por chofer
+      if (ESTADOS_69.has(EST)) {
+        pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
+        pushNodo(OW, 0, CHO, 69, dia, 1, envio);
+      }
     }
 
-    // buscar chofer anterior (antes de ESTE evento)
-    const qPrev = `
+    // DESASIGNACIÓN → SOLO - en chofer anterior (misma combinación de estado)
+    const qChoferAnterior = `
       SELECT operador AS didChofer
       FROM asignaciones
       WHERE didEnvio = ? AND didOwner = ? AND operador IS NOT NULL
-        AND autofecha < ?
-      ORDER BY autofecha DESC, id DESC
+      ORDER BY id DESC
       LIMIT 1
     `;
-    const prev = await executeQuery(conn, qPrev, [envio, OW, row.fecha]);
+    const prev = await executeQuery(conn, qChoferAnterior, [envio, OW]);
     if (prev.length) {
-      const choPrev = prev[0].didChofer ?? 0;
+      const choPrev = prev[0].didChofer || 0;
       if (choPrev !== 0) {
-        addNodeChofer(OW, CLI, choPrev, EST, dia).del.add(envio);
-        addNodeChofer(OW, 0, choPrev, EST, dia).del.add(envio);
+        pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
+        pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
+
+        if (ESTADOS_69.has(EST)) {
+          pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
+          pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
+        }
       }
     }
 
     idsProcesados.push(row.id);
   }
+  return Aprocesos;
 }
 
-/* =========================
-   APPLY
-   ========================= */
+async function aplicarAprocesosAHommeApp(conn) {
+  // owner -> cliente -> chofer -> estado -> dia -> {1:[],0:[]}
+  for (const owner in Aprocesos) {
+    const porCliente = Aprocesos[owner];
 
-// HISTORIAL: upsert sobre (owner, cliente, chofer=0, estado, dia)
-async function applyEstados(conn) {
-  const sel = `
-    SELECT didsPaquete
-    FROM home_app
-    WHERE didOwner=? AND didCliente=? AND didChofer=0 AND estado=? AND dia=?
-    LIMIT 1
-  `;
-  const upd = `
-    UPDATE home_app
-    SET didsPaquete=?, pendientes=0, autofecha=NOW()
-    WHERE didOwner=? AND didCliente=? AND didChofer=0 AND estado=? AND dia=?
-  `;
-  const ins = `
-    INSERT INTO home_app
-      (didOwner, didCliente, didChofer, estado, didsPaquete, fecha, dia, pendientes)
-    VALUES
-      (?, ?, 0, ?, ?, NOW(), ?, 0)
-  `;
+    for (const cliente in porCliente) {
+      const porChofer = porCliente[cliente];
 
-  for (const owner in AEstados) {
-    for (const cliente in AEstados[owner]) {
-      for (const estado in AEstados[owner][cliente]) {
-        const porDia = AEstados[owner][cliente][estado];
-        for (const dia in porDia) {
-          const setPaq = porDia[dia];
-          if (!setPaq || setPaq.size === 0) continue;
+      for (const chofer in porChofer) {
+        const porEstado = porChofer[chofer];
 
-          const actual = await executeQuery(conn, sel, [owner, cliente, estado, dia]);
+        for (const estado in porEstado) {
+          const porDia = porEstado[estado];
 
-          // merge ∪
-          const union = new Set();
-          if (actual.length && actual[0].didsPaquete) {
-            for (const p of String(actual[0].didsPaquete).split(',')) {
-              const t = p.trim(); if (t) union.add(t);
-            }
-          }
-          for (const p of setPaq) union.add(String(p));
-
-          const didsStr = Array.from(union).join(',');
-
-          if (actual.length > 0) {
-            await executeQuery(conn, upd, [didsStr, owner, cliente, estado, dia]);
-          } else {
-            await executeQuery(conn, ins, [owner, cliente, estado, didsStr, dia]);
-          }
-        }
-      }
-    }
-  }
-}
-
-// FOTO por CHOFER: upsert sobre (owner, cliente, chofer, estado, dia)
-// aplica + y - y mantiene pendientes=0
-async function applyChoferes(conn) {
-  const sel = `
-    SELECT didsPaquete
-    FROM home_app
-    WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-    LIMIT 1
-  `;
-  const upd = `
-    UPDATE home_app
-    SET didsPaquete=?, pendientes=0, autofecha=NOW()
-    WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-  `;
-  const ins = `
-    INSERT INTO home_app
-      (didOwner, didCliente, didChofer, estado, didsPaquete, fecha, dia, pendientes)
-    VALUES
-      (?, ?, ?, ?, ?, NOW(), ?, 0)
-  `;
-
-  for (const owner in AChoferes) {
-    for (const cliente in AChoferes[owner]) {
-      for (const chofer in AChoferes[owner][cliente]) {
-        for (const estado in AChoferes[owner][cliente][chofer]) {
-          const porDia = AChoferes[owner][cliente][chofer][estado];
           for (const dia in porDia) {
             const nodo = porDia[dia];
-            const add = nodo.add ? [...nodo.add] : [];
-            const del = nodo.del ? [...nodo.del] : [];
-            if (add.length === 0 && del.length === 0) continue;
+            const pos = [...new Set(nodo[1] || [])];
+            const neg = [...new Set(nodo[0] || [])];
+            if (pos.length === 0 && neg.length === 0) continue;
 
+            // leer fila actual por (owner, cliente, chofer, estado, dia)
+            const sel = `
+              SELECT didsPaquete, pendientes
+              FROM home_app
+              WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
+              LIMIT 1
+            `;
             const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
-            const paquetes = new Set(
-              actual.length && actual[0].didsPaquete
-                ? String(actual[0].didsPaquete).split(',').map(s => s.trim()).filter(Boolean)
-                : []
-            );
-            for (const p of add) paquetes.add(String(p));
-            for (const p of del) paquetes.delete(String(p));
+            // parsear actuales a Set
+            let paquetes = new Set();
+            let pendientes = 0;
+            if (actual.length > 0) {
+              const s = actual[0].didsPaquete || "";
+              if (s) {
+                for (const p of s.split(",")) {
+                  const t = p.trim();
+                  if (t) paquetes.add(t);
+                }
+              }
+              pendientes = actual[0].pendientes || 0;
+            }
 
-            const didsStr = Array.from(paquetes).join(',');
+            // aplicar positivos
+            for (const p of pos) {
+              const k = String(p);
+              if (!paquetes.has(k)) {
+                paquetes.add(k);
+                pendientes += 1;
+              }
+            }
+
+            // aplicar negativos
+            for (const p of neg) {
+              const k = String(p);
+              if (paquetes.has(k)) {
+                paquetes.delete(k);
+                pendientes = Math.max(0, pendientes - 1);
+              }
+            }
+
+            const didsPaqueteStr = Array.from(paquetes).join(",");
 
             if (actual.length > 0) {
-              await executeQuery(conn, upd, [didsStr, owner, cliente, chofer, estado, dia]);
+              const upd = `
+                UPDATE home_app
+                SET didsPaquete=?, pendientes=?, autofecha=NOW()
+                WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
+              `;
+              await executeQuery(conn, upd, [didsPaqueteStr, pendientes, owner, cliente, chofer, estado, dia]);
             } else {
-              await executeQuery(conn, ins, [owner, cliente, chofer, estado, didsStr, dia]);
+              const ins = `
+                INSERT INTO home_app
+                  (didOwner, didCliente, didChofer, estado, didsPaquete, fecha, dia, pendientes)
+                VALUES
+                  (?, ?, ?, ?, ?, NOW(), ?, ?)
+              `;
+              await executeQuery(conn, ins, [owner, cliente, chofer, estado, didsPaqueteStr, dia, pendientes]);
             }
-          }
-        }
-      }
+          } // dia
+        } // estado
+      } // chofer
+    } // cliente
+  }
+
+  // marcar cdc como procesado (en batches)
+  if (idsProcesados.length > 0) {
+    const CHUNK = 1000;
+    for (let i = 0; i < idsProcesados.length; i += CHUNK) {
+      const slice = idsProcesados.slice(i, i + CHUNK);
+      const updCdc = `UPDATE cdc SET procesado=1 WHERE id IN (${slice.map(() => '?').join(',')})`;
+      await executeQuery(conn, updCdc, slice);
+      console.log("✅ CDC marcado como procesado para", slice.length, "rows");
     }
   }
 }
-
-/* =========================
-   RUNNER
-   ========================= */
 
 async function pendientesHoy() {
   try {
     const conn = await getConnectionLocal();
-    const FETCH = 1000;
+    const FETCH = 1000;  // cuánto traigo de cdc por batch
 
-    const q = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, fecha, estado, disparador, ejecutar
+    // Traigo 'estado' + 'fecha' desde cdc
+    const selectCDC = `
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
-        AND ejecutar="estado"
+        AND ejecutar="pendientesHoy"
         AND didCliente IS NOT NULL
       ORDER BY id ASC
       LIMIT ?
     `;
-    const rows = await executeQuery(conn, q, [FETCH]);
+    const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
-    const rowsAsign = rows.filter(r => r.disparador === "asignaciones"); // puede venir vacío en este runner
+    const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
 
-    await buildEstados(conn, rowsEstado);   // historial (chofer=0) + chofer si estado=0
-    await buildChoferes(conn, rowsAsign);   // foto por chofer (+/-) si viniera
+    await buildAprocesosEstado(rowsEstado, conn);
+    await buildAprocesosAsignaciones(conn, rowsAsignaciones);
 
-    await applyEstados(conn);
-    await applyChoferes(conn);
+    await aplicarAprocesosAHommeApp(conn);
 
-    // marcar CDC como procesado
-    if (idsProcesados.length > 0) {
-      const CHUNK = 1000;
-      for (let i = 0; i < idsProcesados.length; i += CHUNK) {
-        const slice = idsProcesados.slice(i, i + CHUNK);
-        const updCdc = `UPDATE cdc SET procesado=1 WHERE id IN (${slice.map(() => '?').join(',')})`;
-        await executeQuery(conn, updCdc, slice);
-      }
-    }
-
-    console.log("✅ home_app actualizado: HISTORIAL por estado (chofer=0) + estado=0 también por chofer (add); y FOTO por chofer (±) si aplica. Clave: (owner,cliente,chofer,estado,dia), pendientes=0");
   } catch (err) {
-    console.error("❌ Error pendientesHoy:", err);
+    console.error("❌ Error batch:", err);
   }
 }
 
