@@ -8,7 +8,7 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-      SELECT didOwner, didEnvio, estado, autofecha
+      SELECT didOwner, didEnvio, estado, autofecha,quien
       FROM estado
       WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
       LIMIT 50
@@ -23,8 +23,8 @@ async function EnviarcdcEstado(didOwner) {
 
         // Inserta en CDC (con columna 'estado' y 'didCliente' solo cuando ejecutar = 'estado')
         const insertQuery = `
-      INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente, fecha)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente, fecha,didChofer)
+      VALUES (?, ?, ?, ?, ?, ?, ?,?)
     `;
 
         const updateQuery = `
@@ -37,7 +37,7 @@ async function EnviarcdcEstado(didOwner) {
         const disparador = "estado";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, estado, autofecha } = row;
+            const { didOwner, didEnvio, estado, autofecha, quien } = row;
 
             // Buscar didCliente del envío
             const getDidClienteQuery = `
@@ -58,7 +58,8 @@ async function EnviarcdcEstado(didOwner) {
                     estado,         // solo tiene sentido para 'estado'; para 'verificarCierre' queda info contextual
                     disparador,
                     clienteInsertar,
-                    autofecha
+                    autofecha,
+                    quien || 0
                 ], true);
             }
 

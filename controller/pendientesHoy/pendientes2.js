@@ -21,12 +21,26 @@ const nEstado = v => {
   return Number.isFinite(n) ? n : null;
 };
 
+// ===== helper global para AChoferes =====
+const ensure = (o, k) => (o[k] ??= {});
+function addNodeChofer(owner, cli, cho, est, day) {
+  ensure(AChoferes, owner);
+  ensure(AChoferes[owner], cli);
+  ensure(AChoferes[owner][cli], cho);
+  ensure(AChoferes[owner][cli][cho], est);
+  ensure(AChoferes[owner][cli][cho][est], day);
+  const cur = AChoferes[owner][cli][cho][est][day];
+  if (!cur.add) cur.add = new Set();
+  if (!cur.del) cur.del = new Set();
+  return cur;
+}
+
 /* =========================
    BUILDERS
    ========================= */
 
 // HISTORIAL por ESTADO (disparador='estado'): guardamos en chofer=0
-// además, si querés el total por owner (cliente=0), sumo también (owner,0,0,estado,dia)
+// además, total por owner (cliente=0)
 async function buildEstados(_conn, rowsEstado) {
   for (const row of rowsEstado) {
     const OW = row.didOwner;
@@ -44,11 +58,22 @@ async function buildEstados(_conn, rowsEstado) {
     if (!AEstados[OW][CLI][EST][dia]) AEstados[OW][CLI][EST][dia] = new Set();
     AEstados[OW][CLI][EST][dia].add(envio);
 
-    // (opcional) owner / cliente=0 / chofer=0 / estado / dia  → total por owner
+    // owner / cliente=0 / chofer=0 / estado / dia  → total por owner
     if (!AEstados[OW][0]) AEstados[OW][0] = {};
     if (!AEstados[OW][0][EST]) AEstados[OW][0][EST] = {};
     if (!AEstados[OW][0][EST][dia]) AEstados[OW][0][EST][dia] = new Set();
     AEstados[OW][0][EST][dia].add(envio);
+
+    // >>> estado 0: también cargar en chofer vigente del CDC (sin buscar nada extra)
+    if (EST === 0) {
+      const CHO = row.didChofer ?? 0;
+      if (CHO !== 0) {
+        // por cliente específico
+        addNodeChofer(OW, CLI, CHO, EST, dia).add.add(envio);
+        // agregador por chofer con todos los clientes (cliente=0)
+        addNodeChofer(OW, 0, CHO, EST, dia).add.add(envio);
+      }
+    }
 
     idsProcesados.push(row.id);
   }
@@ -67,26 +92,10 @@ async function buildChoferes(conn, rowsAsign) {
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
 
-    // helper para anidar
-    const ensure = (o, k) => (o[k] ??= {});
-    const addNode = (owner, cli, cho, est, day) => {
-      ensure(AChoferes, owner);
-      ensure(AChoferes[owner], cli);
-      ensure(AChoferes[owner][cli], cho);
-      ensure(AChoferes[owner][cli][cho], est);
-      ensure(AChoferes[owner][cli][cho][est], day);
-      const cur = AChoferes[owner][cli][cho][est][day];
-      if (!cur.add) cur.add = new Set();
-      if (!cur.del) cur.del = new Set();
-      return cur;
-    };
-
     // + al chofer actual (si CHO != 0)
     if (CHO !== 0) {
-      // por cliente específico
-      addNode(OW, CLI, CHO, EST, dia).add.add(envio);
-      // por chofer con todos los clientes (cliente=0)
-      addNode(OW, 0, CHO, EST, dia).add.add(envio);
+      addNodeChofer(OW, CLI, CHO, EST, dia).add.add(envio);
+      addNodeChofer(OW, 0, CHO, EST, dia).add.add(envio);
     }
 
     // buscar chofer anterior (antes de ESTE evento)
@@ -102,9 +111,8 @@ async function buildChoferes(conn, rowsAsign) {
     if (prev.length) {
       const choPrev = prev[0].didChofer ?? 0;
       if (choPrev !== 0) {
-        // - al chofer anterior (misma combinación de estado)
-        addNode(OW, CLI, choPrev, EST, dia).del.add(envio);
-        addNode(OW, 0, choPrev, EST, dia).del.add(envio);
+        addNodeChofer(OW, CLI, choPrev, EST, dia).del.add(envio);
+        addNodeChofer(OW, 0, choPrev, EST, dia).del.add(envio);
       }
     }
 
@@ -245,10 +253,10 @@ async function pendientesHoy() {
     const rows = await executeQuery(conn, q, [FETCH]);
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
-    const rowsAsign = rows.filter(r => r.disparador === "asignaciones");
+    const rowsAsign = rows.filter(r => r.disparador === "asignaciones"); // puede venir vacío en este runner
 
-    await buildEstados(conn, rowsEstado);   // historial (chofer=0)
-    await buildChoferes(conn, rowsAsign);   // foto por chofer (+/-)
+    await buildEstados(conn, rowsEstado);   // historial (chofer=0) + chofer si estado=0
+    await buildChoferes(conn, rowsAsign);   // foto por chofer (+/-) si viniera
 
     await applyEstados(conn);
     await applyChoferes(conn);
@@ -263,7 +271,7 @@ async function pendientesHoy() {
       }
     }
 
-    console.log("✅ home_app actualizado: HISTORIAL por estado (chofer=0) + FOTO por chofer (±), todos con clave (owner,cliente,chofer,estado,dia) y pendientes=0");
+    console.log("✅ home_app actualizado: HISTORIAL por estado (chofer=0) + estado=0 también por chofer (add); y FOTO por chofer (±) si aplica. Clave: (owner,cliente,chofer,estado,dia), pendientes=0");
   } catch (err) {
     console.error("❌ Error pendientesHoy:", err);
   }
