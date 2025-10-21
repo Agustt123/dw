@@ -239,7 +239,7 @@ async function pendientesHoy() {
       SELECT id, didOwner, didPaquete, didCliente, didChofer, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
-        AND ejecutar="estado"
+        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
         AND didCliente IS NOT NULL
    
       ORDER BY id ASC
