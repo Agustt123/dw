@@ -131,88 +131,90 @@ async function buildAprocesosAsignaciones(conn, rows) {
 }
 
 async function aplicarAprocesosAHommeApp(conn) {
-  // owner -> cliente -> chofer -> estado -> dia -> {1:[],0:[]}
-  for (const owner in Aprocesos) {
-    const porCliente = Aprocesos[owner];
+  // Iniciar transacción para evitar carreras entre SELECT/INSERT/UPDATE
+  await executeQuery(conn, "START TRANSACTION");
+  try {
+    // owner -> cliente -> chofer -> estado -> dia -> {1:[],0:[]}
+    for (const owner in Aprocesos) {
+      const porCliente = Aprocesos[owner];
 
-    for (const cliente in porCliente) {
-      const porChofer = porCliente[cliente];
+      for (const cliente in porCliente) {
+        const porChofer = porCliente[cliente];
 
-      for (const chofer in porChofer) {
-        const porEstado = porChofer[chofer];
+        for (const chofer in porChofer) {
+          const porEstado = porChofer[chofer];
 
-        for (const estado in porEstado) {
-          const porDia = porEstado[estado];
+          for (const estado in porEstado) {
+            const porDia = porEstado[estado];
 
-          for (const dia in porDia) {
-            const nodo = porDia[dia];
-            const pos = [...new Set(nodo[1] || [])];
-            const neg = [...new Set(nodo[0] || [])];
-            if (pos.length === 0 && neg.length === 0) continue;
+            for (const dia in porDia) {
+              const nodo = porDia[dia];
+              const pos = [...new Set(nodo[1] || [])];
+              const neg = [...new Set(nodo[0] || [])];
+              if (pos.length === 0 && neg.length === 0) continue;
 
-            // leer fila actual por (owner, cliente, chofer, estado, dia)
-            const sel = `
-              SELECT didsPaquete, pendientes
-              FROM home_app
-              WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-              LIMIT 1
-            `;
-            const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
+              // 1) Leer con lock por (owner, cliente, chofer, estado, dia)
+              const sel = `
+                SELECT didsPaquete, pendientes
+                FROM home_app
+                WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
+                FOR UPDATE
+              `;
+              const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
-            // parsear actuales a Set
-            let paquetes = new Set();
-            let pendientes = 0;
-            if (actual.length > 0) {
-              const s = actual[0].didsPaquete || "";
-              if (s) {
-                for (const p of s.split(",")) {
-                  const t = p.trim();
-                  if (t) paquetes.add(t);
+              // 2) parsear actuales a Set y calcular pendientes partiendo del valor actual
+              let paquetes = new Set();
+              let pendientes = 0;
+              if (actual.length > 0) {
+                const s = actual[0].didsPaquete || "";
+                if (s) {
+                  for (const p of s.split(",").map(x => x.trim()).filter(Boolean)) paquetes.add(p);
+                }
+                pendientes = actual[0].pendientes || 0;
+              }
+
+              // aplicar positivos
+              for (const p of pos) {
+                const k = String(p);
+                if (!paquetes.has(k)) {
+                  paquetes.add(k);
+                  pendientes += 1;
                 }
               }
-              pendientes = actual[0].pendientes || 0;
-            }
 
-            // aplicar positivos
-            for (const p of pos) {
-              const k = String(p);
-              if (!paquetes.has(k)) {
-                paquetes.add(k);
-                pendientes += 1;
+              // aplicar negativos
+              for (const p of neg) {
+                const k = String(p);
+                if (paquetes.has(k)) {
+                  paquetes.delete(k);
+                  pendientes = Math.max(0, pendientes - 1);
+                }
               }
-            }
 
-            // aplicar negativos
-            for (const p of neg) {
-              const k = String(p);
-              if (paquetes.has(k)) {
-                paquetes.delete(k);
-                pendientes = Math.max(0, pendientes - 1);
-              }
-            }
+              const didsPaqueteStr = Array.from(paquetes).join(",");
 
-            const didsPaqueteStr = Array.from(paquetes).join(",");
-
-            if (actual.length > 0) {
-              const upd = `
-                UPDATE home_app
-                SET didsPaquete=?, pendientes=?, autofecha=NOW()
-                WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-              `;
-              await executeQuery(conn, upd, [didsPaqueteStr, pendientes, owner, cliente, chofer, estado, dia]);
-            } else {
-              const ins = `
+              // 3) UPSERT atómico (evita ER_DUP_ENTRY)
+              const upsert = `
                 INSERT INTO home_app
                   (didOwner, didCliente, didChofer, estado, didsPaquete, fecha, dia, pendientes)
                 VALUES
                   (?, ?, ?, ?, ?, NOW(), ?, ?)
+                ON DUPLICATE KEY UPDATE
+                  didsPaquete = VALUES(didsPaquete),
+                  pendientes  = VALUES(pendientes),
+                  autofecha   = NOW()
               `;
-              await executeQuery(conn, ins, [owner, cliente, chofer, estado, didsPaqueteStr, dia, pendientes]);
-            }
-          } // dia
-        } // estado
-      } // chofer
-    } // cliente
+              await executeQuery(conn, upsert, [owner, cliente, chofer, estado, didsPaqueteStr, dia, pendientes]);
+            } // dia
+          } // estado
+        } // chofer
+      } // cliente
+    } // owner
+
+    await executeQuery(conn, "COMMIT");
+  } catch (e) {
+    await executeQuery(conn, "ROLLBACK");
+    throw e;
   }
 
   // marcar cdc como procesado (en batches)
@@ -237,12 +239,15 @@ async function pendientesHoy() {
       SELECT id, didOwner, didPaquete, didCliente, didChofer, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
-        AND ejecutar="pendientesHoy"
+        AND ejecutar="estado"
         AND didCliente IS NOT NULL
+   
       ORDER BY id ASC
       LIMIT ?
     `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
+
+
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");

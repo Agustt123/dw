@@ -50,7 +50,7 @@ async function EnviarcdcEstado(didOwner) {
             const didCliente = rowsCliente.length > 0 ? rowsCliente[0].didCliente : null;
 
             for (const ejecutar of ejecutadores) {
-                const clienteInsertar = (ejecutar === "estado") ? didCliente : null;
+                const clienteInsertar = (ejecutar === "estado") ? didCliente : didCliente;
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
@@ -153,9 +153,10 @@ async function EnviarcdAsignacion(didOwner) {
     }
 }
 
-
+EnviarcdcEstado(164);
 
 module.exports = {
     EnviarcdcEstado,
     EnviarcdAsignacion
 };
+895340
