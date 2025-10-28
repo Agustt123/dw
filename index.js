@@ -30,7 +30,7 @@ async function actualizarEmpresas() {
     }
 }
 
-app.get("/chris", (req, res) => {
+app.get("/ping", (req, res) => {
     res.status(200).json({
         estado: true,
         mesanje: "Hola chris",
@@ -41,7 +41,7 @@ const PORT = 13000;
 
 (async () => {
     try {
-
+        /*
         await actualizarEmpresas();
 
         // ⬇️⬇️⬇️ CAMBIO CLAVE: no await a la función con while(true)
@@ -69,7 +69,7 @@ const PORT = 13000;
                 running = false;
             }
         }, 1 * 60 * 1000);
-
+*/
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
         });
