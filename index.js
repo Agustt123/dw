@@ -30,7 +30,7 @@ async function actualizarEmpresas() {
     }
 }
 
-app.get("/", (req, res) => {
+app.get("/chris", (req, res) => {
     res.status(200).json({
         estado: true,
         mesanje: "Hola chris",
