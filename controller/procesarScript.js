@@ -40,7 +40,18 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-        const query = 'ALTER TABLE `envios_historial` CHANGE `desde` `desde` VARCHAR(32) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL;';
+        const query = `
+UPDATE envios_fotos
+SET nombre = REPLACE(
+    REPLACE(
+        REPLACE(
+            REPLACE(nombre, '[', ''),
+        ']', ''),
+    '"', ''),
+' ', '')
+WHERE nombre LIKE '%[%';
+`;
+
 
 
 

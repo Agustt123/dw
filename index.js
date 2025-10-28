@@ -5,6 +5,7 @@ const { redisClient, getFromRedis } = require("./db.js");
 const { sincronizarEnviosParaTodasLasEmpresas, sincronizarEnviosParaTodasLasEmpresas2 } = require("./controller/controllerEnvio.js");
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
+const informeColecta = require("./route/informe-colecta.js");
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
@@ -16,6 +17,7 @@ app.use(
         allowedHeaders: ["Content-Type", "Authorization"],
     })
 );
+app.use("/informe-colecta", informeColecta)
 
 let empresasDB = null;
 
@@ -39,6 +41,7 @@ const PORT = 13000;
 
 (async () => {
     try {
+
         await actualizarEmpresas();
 
         // ⬇️⬇️⬇️ CAMBIO CLAVE: no await a la función con while(true)
