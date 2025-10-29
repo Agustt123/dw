@@ -1,20 +1,30 @@
 // routes/informeColecta.js
 const express = require('express');
+const crypto = require('crypto');
 const { colectasEstado0PorChofer } = require('../controller/informeColecta/chofer-total');
-
 const { getConnectionLocal } = require('../db');
 const { detalleColectasPorChoferDiaCliente } = require('../controller/informeColecta/detalle-chofer');
 
 const informeColecta = express.Router();
 
-/**
- * Body esperado:
- * {
- *   "didEmpresa": number|string,
- *   "desde": "YYYY-MM-DD",
- *   "hasta": "YYYY-MM-DD"
- * }
- */
+// Hash esperado (constante)
+const EXPECTED_TOKEN = crypto.createHash('sha256').update('lightdata').digest('hex');
+console.log(EXPECTED_TOKEN);
+
+
+// Middleware de verificación
+function requireToken(req, res, next) {
+    const provided = req.body?.token;
+    if (provided !== EXPECTED_TOKEN) {
+        return res.status(401).json({ estado: false, mensaje: 'Token inválido' });
+    }
+    return next();
+}
+
+// Aplico el middleware a todas las rutas de este router
+informeColecta.use(requireToken);
+
+// ---------- handlers ----------
 informeColecta.post('/byChofer', async (req, res) => {
     const db = await getConnectionLocal();
     const { didEmpresa, desde, hasta } = req.body || {};
@@ -25,7 +35,7 @@ informeColecta.post('/byChofer', async (req, res) => {
 
     try {
         const resultado = await colectasEstado0PorChofer(didEmpresa, desde, hasta, db);
-        return res.status(200).json(resultado);
+        return res.status(200).json({ data: resultado });
     } catch (error) {
         console.error("Error /byChofer:", error);
         return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
@@ -34,15 +44,6 @@ informeColecta.post('/byChofer', async (req, res) => {
     }
 });
 
-/**
- * Body esperado:
- * {
- *   "didEmpresa": number|string,
- *   "didChofer": number|string,
- *   "desde": "YYYY-MM-DD",
- *   "hasta": "YYYY-MM-DD"
- * }
- */
 informeColecta.post('/detalleByChofer', async (req, res) => {
     const db = await getConnectionLocal();
     const { didEmpresa, didChofer, desde, hasta } = req.body || {};
@@ -54,7 +55,7 @@ informeColecta.post('/detalleByChofer', async (req, res) => {
 
     try {
         const data = await detalleColectasPorChoferDiaCliente(didEmpresa, didChofer, desde, hasta, db);
-        return res.status(200).json(data);
+        return res.status(200).json({ data });
     } catch (error) {
         console.error("Error /detalleByChofer:", error);
         return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
