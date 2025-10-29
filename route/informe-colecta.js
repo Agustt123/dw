@@ -55,7 +55,7 @@ informeColecta.post('/detalleByChofer', async (req, res) => {
 
     try {
         const data = await detalleColectasPorChoferDiaCliente(didEmpresa, didChofer, desde, hasta, db);
-        return res.status(200).json({ data });
+        return res.status(200).json(data);
     } catch (error) {
         console.error("Error /detalleByChofer:", error);
         return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });

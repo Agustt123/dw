@@ -70,18 +70,17 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
             if (ids.length) porCliente.get(cli).push(...ids);
         }
     }
-
-    // armar salida
-    const fechas = [];
+    // armar salida como objeto de fechas
+    const fechas = {};
     for (const [diaKey, clientesMap] of porDia.entries()) {
         const clientesObj = {};
         for (const [cli, ids] of clientesMap.entries()) {
             clientesObj[cli] = { didsPaquetes: ids };
         }
-        fechas.push({ [diaKey]: { clientes: clientesObj } });
+        fechas[diaKey] = { clientes: clientesObj };
     }
 
-    return [{ chofer: Number(didChofer), fechas }];
-}
+    return fechas;
 
+}
 module.exports = { detalleColectasPorChoferDiaCliente };
