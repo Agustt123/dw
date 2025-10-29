@@ -6,7 +6,7 @@ const { executeQuery } = require("../../db");
  * {
  *   "DD-MM": {
  *     cantidad: <número de clientes con colectas>,
- *     dids: [<todos los didsPaquete del día>],
+ *     dids: "<todos los didsPaquete del día separados por coma>",
  *     clientes: {
  *       "<cliente>": { didsPaquetes:[...] }
  *     }
@@ -37,7 +37,6 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
 
     const rows = await executeQuery(conn, sql, [dIdOwner, didChofer, desde, hasta], true);
 
-    // formatea YYYY-MM-DD -> DD-MM
     const fmtDia = (val) => {
         if (val == null) return '??-??';
         if (val instanceof Date && !isNaN(val)) {
@@ -54,8 +53,7 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
         return s;
     };
 
-    // Map<fecha, Map<cliente, number[]>>
-    const porDia = new Map();
+    const porDia = new Map(); // Map<string, Map<string, number[]>>
 
     for (const r of rows) {
         const ddmm = fmtDia(r.dia);
@@ -87,12 +85,12 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
             didsTotales.push(...ids);
         }
 
-        // eliminar duplicados por si acaso
-        didsTotales = [...new Set(didsTotales)];
+        // eliminar duplicados y convertir a string separado por coma
+        const didsString = [...new Set(didsTotales)].join(',');
 
         fechas[diaKey] = {
             cantidad: clientesMap.size,  // número de clientes válidos ese día
-            dids: didsTotales,           // todos los dids de ese día
+            dids: didsString,            // string de todos los dids separados por coma
             clientes: clientesObj
         };
     }
