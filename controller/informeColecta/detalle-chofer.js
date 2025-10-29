@@ -6,6 +6,7 @@ const { executeQuery } = require("../../db");
  * {
  *   "DD-MM": {
  *     cantidad: <número de clientes con colectas>,
+ *     dids: [<todos los didsPaquete del día>],
  *     clientes: {
  *       "<cliente>": { didsPaquetes:[...] }
  *     }
@@ -36,6 +37,7 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
 
     const rows = await executeQuery(conn, sql, [dIdOwner, didChofer, desde, hasta], true);
 
+    // formatea YYYY-MM-DD -> DD-MM
     const fmtDia = (val) => {
         if (val == null) return '??-??';
         if (val instanceof Date && !isNaN(val)) {
@@ -52,7 +54,8 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
         return s;
     };
 
-    const porDia = new Map(); // Map<string, Map<string, number[]>>
+    // Map<fecha, Map<cliente, number[]>>
+    const porDia = new Map();
 
     for (const r of rows) {
         const ddmm = fmtDia(r.dia);
@@ -73,16 +76,23 @@ async function detalleColectasPorChoferDiaCliente(dIdOwner, didChofer, desde, ha
         porCliente.set(cli, ids);
     }
 
-    // armar salida como objeto de fechas
+    // armar salida final
     const fechas = {};
     for (const [diaKey, clientesMap] of porDia.entries()) {
         const clientesObj = {};
+        let didsTotales = [];
+
         for (const [cli, ids] of clientesMap.entries()) {
             clientesObj[cli] = { didsPaquetes: ids };
+            didsTotales.push(...ids);
         }
 
+        // eliminar duplicados por si acaso
+        didsTotales = [...new Set(didsTotales)];
+
         fechas[diaKey] = {
-            cantidad: clientesMap.size, // número de clientes válidos ese día
+            cantidad: clientesMap.size,  // número de clientes válidos ese día
+            dids: didsTotales,           // todos los dids de ese día
             clientes: clientesObj
         };
     }
