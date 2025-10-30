@@ -1,13 +1,27 @@
-const { executeQuery, getConnectionLocal } = require("../../db");
+const { executeQuery } = require("../../db");
 
 /**
  * Colectas (estado '0') por chofer para un owner y rango de fechas.
- * Devuelve: [{ chofer: number, colectas: number }, ...]
- * Donde "colectas" = # de clientes distintos atendidos por ese chofer.
+ * Devuelve:
+ * {
+ *   data: [
+ *     { chofer: number, colectas: number },
+ *     ...
+ *   ],
+ *   dataCliente: [
+ *     { cliente: number, colecta: { colectas: number } },
+ *     ...
+ *   ]
+ * }
  */
 async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
-    try {
-        const sql = `
+  if (!dIdOwner) throw new Error("dIdOwner requerido");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde || '')) throw new Error("desde debe ser YYYY-MM-DD");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(hasta || '')) throw new Error("hasta debe ser YYYY-MM-DD");
+
+  try {
+    // 🔹 1. Colectas por chofer
+    const sqlColectas = `
       SELECT
         didChofer,
         COUNT(DISTINCT didCliente) AS colectas
@@ -23,15 +37,42 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
       ORDER BY colectas DESC
     `;
 
-        const rows = await executeQuery(conn, sql, [dIdOwner, desde, hasta], true);
+    const rows = await executeQuery(conn, sqlColectas, [dIdOwner, desde, hasta], true);
 
-        return rows.map(r => ({
-            chofer: Number(r.didChofer),
-            colectas: Number(r.colectas || 0),
-        }));
-    } finally {
-        // sin manejo de conexión acá porque recibimos `conn`
-    }
+    const data = rows.map(r => ({
+      chofer: Number(r.didChofer),
+      colectas: Number(r.colectas || 0)
+    }));
+
+    // 🔹 2. Cantidad de choferes distintos por cliente
+    const sqlClientes = `
+      SELECT
+        didCliente,
+        COUNT(DISTINCT didChofer) AS colectas
+      FROM home_app
+      WHERE dIdOwner   = ?
+        AND estado     = '0'
+        AND dia BETWEEN ? AND ?
+        AND didCliente <> 0
+        AND didsPaquete IS NOT NULL
+        AND didsPaquete <> ''
+      GROUP BY didCliente
+      ORDER BY colectas DESC
+    `;
+
+    const clientesRows = await executeQuery(conn, sqlClientes, [dIdOwner, desde, hasta], true);
+
+    const dataCliente = clientesRows.map(c => ({
+      cliente: Number(c.didCliente),
+      colecta: Number(c.colectas || 0)
+    }));
+
+    // 🔹 3. Devolver ambos conjuntos de datos
+    return { data, dataCliente };
+
+  } finally {
+    // sin manejo de conexión acá porque recibimos `conn`
+  }
 }
 
 module.exports = { colectasEstado0PorChofer };
