@@ -9,7 +9,7 @@ const { executeQuery } = require("../../db");
  *     ...
  *   ],
  *   dataCliente: [
- *     { cliente: number, colecta: { colectas: number } },
+ *     { cliente: number, colecta: number },
  *     ...
  *   ]
  * }
@@ -20,11 +20,11 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(hasta || '')) throw new Error("hasta debe ser YYYY-MM-DD");
 
   try {
-    // 🔹 1. Colectas por chofer
+    // 🔹 1. Colectas por chofer (cuenta por día también)
     const sqlColectas = `
       SELECT
         didChofer,
-        COUNT(DISTINCT didCliente) AS colectas
+        COUNT(DISTINCT CONCAT(didCliente, '-', DATE_FORMAT(dia, '%Y-%m-%d'))) AS colectas
       FROM home_app
       WHERE dIdOwner   = ?
         AND didChofer <> 0
@@ -44,11 +44,11 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
       colectas: Number(r.colectas || 0)
     }));
 
-    // 🔹 2. Cantidad de choferes distintos por cliente
+    // 🔹 2. Colectas por cliente (cuenta cantidad de choferes *por día*)
     const sqlClientes = `
       SELECT
         didCliente,
-        COUNT(DISTINCT didChofer) AS colectas
+        COUNT(DISTINCT CONCAT(didChofer, '-', DATE_FORMAT(dia, '%Y-%m-%d'))) AS colectas
       FROM home_app
       WHERE dIdOwner   = ?
         AND estado     = '0'
@@ -67,7 +67,7 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
       colecta: Number(c.colectas || 0)
     }));
 
-    // 🔹 3. Devolver ambos conjuntos de datos
+    // 🔹 3. Devolver ambos conjuntos
     return { data, dataCliente };
 
   } finally {
