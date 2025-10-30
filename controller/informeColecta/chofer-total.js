@@ -1,7 +1,7 @@
 const { executeQuery } = require("../../db");
 
 /**
- * Colectas (estado '0') por chofer para un owner y rango de fechas.
+ * Colectas (estado '0') por chofer y por cliente para un owner y rango de fechas.
  * Devuelve:
  * {
  *   data: [
@@ -20,7 +20,7 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(hasta || '')) throw new Error("hasta debe ser YYYY-MM-DD");
 
   try {
-    // 🔹 1. Colectas por chofer (cuenta por día también)
+    // 🔹 1. Colectas por chofer (cuenta cliente + día)
     const sqlColectas = `
       SELECT
         didChofer,
@@ -31,8 +31,8 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
         AND didCliente <> 0
         AND estado     = '0'
         AND dia BETWEEN ? AND ?
-        AND didsPaquete IS NOT NULL
-        AND didsPaquete <> ''
+        AND TRIM(didsPaquete) <> ''
+        AND didsPaquete REGEXP '[0-9]'
       GROUP BY didChofer
       ORDER BY colectas DESC
     `;
@@ -44,7 +44,7 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
       colectas: Number(r.colectas || 0)
     }));
 
-    // 🔹 2. Colectas por cliente (cuenta cantidad de choferes *por día*)
+    // 🔹 2. Colectas por cliente (cuenta chofer + día, ignora chofer 0)
     const sqlClientes = `
       SELECT
         didCliente,
@@ -52,10 +52,11 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
       FROM home_app
       WHERE dIdOwner   = ?
         AND estado     = '0'
-        AND dia BETWEEN ? AND ?
+        AND didChofer <> 0            -- 👈 excluye chofer 0
         AND didCliente <> 0
-        AND didsPaquete IS NOT NULL
-        AND didsPaquete <> ''
+        AND dia BETWEEN ? AND ?
+        AND TRIM(didsPaquete) <> ''
+        AND didsPaquete REGEXP '[0-9]'
       GROUP BY didCliente
       ORDER BY colectas DESC
     `;
