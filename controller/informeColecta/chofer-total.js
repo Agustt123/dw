@@ -56,7 +56,7 @@ async function colectasEstado0PorChofer(dIdOwner, desde, hasta, conn) {
         AND didCliente <> 0
         AND dia BETWEEN ? AND ?
         AND TRIM(didsPaquete) <> ''
-        AND didsPaquete REGEXP '[0-9]'
+        
       GROUP BY didCliente
       ORDER BY colectas DESC
     `;
