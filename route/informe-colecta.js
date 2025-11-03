@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { colectasEstado0PorChofer } = require('../controller/informeColecta/chofer-total');
 const { getConnectionLocal } = require('../db');
 const { detalleColectasPorChoferDiaCliente } = require('../controller/informeColecta/detalle-chofer');
+const { detalleColectasPorCliente } = require('../controller/informeColecta/detalle-cliente');
 
 const informeColecta = express.Router();
 
@@ -55,6 +56,25 @@ informeColecta.post('/detalleByChofer', async (req, res) => {
 
     try {
         const data = await detalleColectasPorChoferDiaCliente(didEmpresa, didChofer, desde, hasta, db);
+        return res.status(200).json(data);
+    } catch (error) {
+        console.error("Error /detalleByChofer:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
+    } finally {
+        if (db?.release) try { db.release(); } catch { }
+    }
+});
+informeColecta.post('/detalleByCLiente', async (req, res) => {
+    const db = await getConnectionLocal();
+    const { didEmpresa, didCliente, desde, hasta } = req.body || {};
+
+    if (didEmpresa == null || didCliente == null ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(desde || '') || !/^\d{4}-\d{2}-\d{2}$/.test(hasta || '')) {
+        return res.status(400).json({ estado: false, mensaje: "Parámetros inválidos" });
+    }
+
+    try {
+        const data = await detalleColectasPorCliente(didEmpresa, didCliente, desde, hasta, db);
         return res.status(200).json(data);
     } catch (error) {
         console.error("Error /detalleByChofer:", error);
