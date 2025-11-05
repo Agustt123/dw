@@ -41,7 +41,9 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-ALTER TABLE envios_historial ADD sync_externo INT NOT NULL COMMENT '0 no, 1 si, 2 error' AFTER email_notificado_error, ADD sync_externo_fecha DATETIME NULL DEFAULT NULL AFTER sync_externo, ADD sync_externo_error VARCHAR(128) NOT NULL AFTER sync_externo_fecha;
+ALTER TABLE envios
+ADD COLUMN haciaMl DATETIME NULL DEFAULT NULL;
+;
 `;
 
 
