@@ -5,6 +5,7 @@ const idsProcesados = [];
 const LIMIT = 50;
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
+const ESTADOS_70 = new Set([5, 9, 17]);
 
 const TZ = 'America/Argentina/Buenos_Aires';
 function getDiaFromTS(ts) {
@@ -64,6 +65,12 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
     }
 
+    // 2b) Si pertenece al conjunto, cargar TAMBIÉN como estado 70 en chofer=0
+    if (ESTADOS_70.has(EST)) {
+      pushNodo(OW, 0, 0, 70, dia, 1, envio);
+      pushNodo(OW, CLI, 0, 70, dia, 1, envio);
+    }
+
     // 3) Si es estado 0 y viene chofer en el CDC: cargar por chofer en 0 y en 69
     if (EST === 0 && CHO !== 0) {
       // estado 0 (por chofer)
@@ -101,6 +108,11 @@ async function buildAprocesosAsignaciones(conn, rows) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
       }
+      // si el estado pertenece al conjunto, también sumar en 70 por chofer
+      if (ESTADOS_70.has(EST)) {
+        pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
+        pushNodo(OW, 0, CHO, 70, dia, 1, envio);
+      }
     }
 
     // DESASIGNACIÓN → SOLO - en chofer anterior (misma combinación de estado)
@@ -121,6 +133,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
         if (ESTADOS_69.has(EST)) {
           pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
+        }
+        if (ESTADOS_70.has(EST)) {
+          pushNodo(OW, CLI, choPrev, 70, dia, 0, envio);
+          pushNodo(OW, 0, choPrev, 70, dia, 0, envio);
         }
       }
     }
@@ -246,8 +262,6 @@ async function pendientesHoy() {
       LIMIT ?
     `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
-
-
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
