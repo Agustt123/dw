@@ -24,7 +24,7 @@ async function EnviarcdcEstado(didOwner) {
         // Inserta en CDC (con columna 'estado' y 'didCliente' solo cuando ejecutar = 'estado')
         const insertQuery = `
       INSERT IGNORE INTO cdc (didOwner, didPaquete, ejecutar, estado, disparador, didCliente, fecha,didChofer,quien)
-      VALUES (?, ?, ?, ?, ?, ?, ?,?)
+      VALUES (?, ?, ?, ?, ?, ?, ?,?,?)
     `;
 
         const updateQuery = `
