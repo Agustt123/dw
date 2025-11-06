@@ -58,8 +58,8 @@ async function EnviarcdcEstado(didOwner) {
                     estado,         // solo tiene sentido para 'estado'; para 'verificarCierre' queda info contextual
                     disparador,
                     clienteInsertar,
-                    didCadete || 0,
                     autofecha,
+                    didCadete || 0,
                     quien || 0
                 ], true);
             }
