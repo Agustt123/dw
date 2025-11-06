@@ -53,7 +53,11 @@ async function buildAprocesosEstado(rows, connection) {
 
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
-    const CHO = row.didChofer ?? 0;
+
+    // CHO: si estado==0 tomamos 'quien'; si no, usamos didChofer
+    const CHO = EST === 0
+      ? (Number(row.quien) || 0)
+      : (row.didChofer ?? 0);
 
     // 1) Siempre cargar estado REAL en chofer=0
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
@@ -71,7 +75,7 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
     }
 
-    // 3) Si es estado 0 y viene chofer en el CDC: cargar por chofer en 0 y en 69
+    // 3) Si es estado 0 y viene chofer (desde 'quien'): cargar por chofer en 0 y en 69
     if (EST === 0 && CHO !== 0) {
       // estado 0 (por chofer)
       pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
@@ -250,14 +254,13 @@ async function pendientesHoy() {
     const conn = await getConnectionLocal();
     const FETCH = 1000;  // cuánto traigo de cdc por batch
 
-    // Traigo 'estado' + 'fecha' desde cdc
+    // Traigo 'estado' + 'fecha' desde cdc (incluye 'quien')
     const selectCDC = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, estado, disparador, ejecutar, fecha
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
         AND ( ejecutar="estado" OR ejecutar="asignaciones" )
         AND didCliente IS NOT NULL
-   
       ORDER BY id ASC
       LIMIT ?
     `;
