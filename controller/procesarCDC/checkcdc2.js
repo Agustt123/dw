@@ -8,7 +8,7 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-      SELECT didOwner, didEnvio, estado, autofecha,quien,operador
+      SELECT didOwner, didEnvio, estado, autofecha,quien,didCadete
       FROM estado
       WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
       LIMIT 50
@@ -37,7 +37,7 @@ async function EnviarcdcEstado(didOwner) {
         const disparador = "estado";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, estado, autofecha, quien, operador } = row;
+            const { didOwner, didEnvio, estado, autofecha, quien, didCadete } = row;
 
             // Buscar didCliente del envío
             const getDidClienteQuery = `
@@ -58,7 +58,7 @@ async function EnviarcdcEstado(didOwner) {
                     estado,         // solo tiene sentido para 'estado'; para 'verificarCierre' queda info contextual
                     disparador,
                     clienteInsertar,
-                    operador || 0,
+                    didCadete || 0,
                     autofecha,
                     quien || 0
                 ], true);
