@@ -6,7 +6,7 @@ async function EnviarcdcEstado(didOwner) {
         const connection = await getConnectionLocal(didOwner);
 
         const selectQuery = `
-            SELECT didOwner, didEnvio, estado,autofecha
+            SELECT didOwner, didEnvio, estado,autofecha,quien
             FROM estado 
             WHERE cdc = 0 AND didOwner = ? and autofecha >= '2025-10-10 00:00:00'
             LIMIT 50
