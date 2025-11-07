@@ -94,7 +94,7 @@ async function detallesColectasFantasma(dIdOwner, didsChoferesStr, desde, hasta,
     for (const [diaKey, idsSet] of porDia.entries()) {
         const idsArray = [...idsSet];
         resultado[diaKey] = {
-            colectas: idsArray.length,
+            cantidad: idsArray.length,
             dids: idsArray.join(",")
         };
     }
