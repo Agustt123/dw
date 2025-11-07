@@ -34,6 +34,7 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
 }
 
 // ---------- Builder para disparador = 'estado' ----------
+// ---------- Builder para disparador = 'estado' ----------
 async function buildAprocesosEstado(rows, connection) {
   for (const row of rows) {
     const OW = row.didOwner;
@@ -46,7 +47,7 @@ async function buildAprocesosEstado(rows, connection) {
 
     // CHO: si estado==0 tomamos 'quien'; si no, usamos didChofer
     const CHO = EST === 0
-      ? (Number(row.quien))
+      ? (Number(row.quien) || 0)
       : (row.didChofer ?? 0);
 
     // 1) ALTAS del estado real en chofer=0 (global y por cliente)
@@ -83,14 +84,17 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, 0, CHO, 69, dia, 1, envio);
     }
 
-    // 5) NUEVO: si EST != 0 y viene CHO != 0, limpiar 0 por ese chofer
-    //    y mantener 69/70 por chofer coherentes con EST
+    // 5) **FIX**: si EST != 0 y CHO != 0 → limpiar 0 por chofer **y** DAR ALTA del estado real por chofer
     if (EST !== 0 && CHO !== 0) {
-      // bajas de 0 por chofer
+      // BAJAS de 0 por chofer
       pushNodo(OW, CLI, CHO, 0, dia, 0, envio);
       pushNodo(OW, 0, CHO, 0, dia, 0, envio);
 
-      // 69 por chofer
+      // **ALTA del estado real por chofer**
+      pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
+      pushNodo(OW, 0, CHO, EST, dia, 1, envio);
+
+      // 69 por chofer (coherente con EST)
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
@@ -98,7 +102,7 @@ async function buildAprocesosEstado(rows, connection) {
         pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
         pushNodo(OW, 0, CHO, 69, dia, 0, envio);
       }
-      // 70 por chofer
+      // 70 por chofer (coherente con EST)
       if (ESTADOS_70.has(EST)) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
