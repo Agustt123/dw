@@ -2,7 +2,7 @@ const { executeQuery, getConnectionLocal } = require("../../db");
 
 const Aprocesos = {};
 const idsProcesados = [];
-const LIMIT = 50; // (no usado, podés quitarlo si querés)
+const LIMIT = 50; // opcional
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
@@ -15,7 +15,6 @@ function getDiaFromTS(ts) {
     timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
   }).format(ok); // 'YYYY-MM-DD'
 }
-
 const nEstado = v => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -50,11 +49,11 @@ async function buildAprocesosEstado(rows, connection) {
       ? (Number(row.quien) || 0)
       : (row.didChofer ?? 0);
 
-    // 1) Siempre cargar estado REAL en chofer=0 (global y por cliente) -> ALTAS
+    // 1) ALTAS del estado real en chofer=0 (global y por cliente)
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // 2) Combinados 69/70 coherentes con el estado actual (ALTAS o BAJAS)
+    // 2) Combinados 69/70 coherentes GLOBAL/CLIENTE (ALTAS o BAJAS)
     if (ESTADOS_69.has(EST)) {
       pushNodo(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
@@ -62,7 +61,6 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, 0, 0, 69, dia, 0, envio);
       pushNodo(OW, CLI, 0, 69, dia, 0, envio);
     }
-
     if (ESTADOS_70.has(EST)) {
       pushNodo(OW, 0, 0, 70, dia, 1, envio);
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
@@ -71,20 +69,43 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // 3) Si NO es estado 0, mandar BAJA a 0 (global y por cliente)
+    // 3) Si NO es estado 0, mandar BAJA a 0 (GLOBAL/CLIENTE)
     if (EST !== 0) {
       pushNodo(OW, 0, 0, 0, dia, 0, envio);
       pushNodo(OW, CLI, 0, 0, dia, 0, envio);
     }
 
-    // 4) Si es estado 0 y CHO (desde 'quien') viene informado: cargar por chofer (0 y 69) -> ALTAS
+    // 4) Caso especial EST==0 con CHO informado: ALTAS por chofer (0 y 69)
     if (EST === 0 && CHO !== 0) {
-      // estado 0 (por chofer)
       pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
       pushNodo(OW, 0, CHO, 0, dia, 1, envio);
-      // estado 69 (por chofer combinado)
       pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
       pushNodo(OW, 0, CHO, 69, dia, 1, envio);
+    }
+
+    // 5) NUEVO: si EST != 0 y viene CHO != 0, limpiar 0 por ese chofer
+    //    y mantener 69/70 por chofer coherentes con EST
+    if (EST !== 0 && CHO !== 0) {
+      // bajas de 0 por chofer
+      pushNodo(OW, CLI, CHO, 0, dia, 0, envio);
+      pushNodo(OW, 0, CHO, 0, dia, 0, envio);
+
+      // 69 por chofer
+      if (ESTADOS_69.has(EST)) {
+        pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
+        pushNodo(OW, 0, CHO, 69, dia, 1, envio);
+      } else {
+        pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
+        pushNodo(OW, 0, CHO, 69, dia, 0, envio);
+      }
+      // 70 por chofer
+      if (ESTADOS_70.has(EST)) {
+        pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
+        pushNodo(OW, 0, CHO, 70, dia, 1, envio);
+      } else {
+        pushNodo(OW, CLI, CHO, 70, dia, 0, envio);
+        pushNodo(OW, 0, CHO, 70, dia, 0, envio);
+      }
     }
 
     idsProcesados.push(row.id);
@@ -98,7 +119,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
     const CHO = row.didChofer ?? 0;  // CHO != 0 => asignación; CHO == 0 => desasignación
-    const EST = nEstado(row.estado); // viene desde CDC (asegurado en SELECT)
+    const EST = nEstado(row.estado); // viene desde CDC
     const envio = String(row.didPaquete);
     if (!OW || EST === null) continue;
 
@@ -120,7 +141,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
       }
     }
 
-    // DESASIGNACIÓN → SOLO - en chofer anterior (misma combinación de estado)
+    // DESASIGNACIÓN → BAJAS en chofer anterior (misma combinación de estado)
     const qChoferAnterior = `
       SELECT operador AS didChofer
       FROM asignaciones
@@ -152,29 +173,23 @@ async function buildAprocesosAsignaciones(conn, rows) {
 }
 
 async function aplicarAprocesosAHommeApp(conn) {
-  // Iniciar transacción para evitar carreras entre SELECT/INSERT/UPDATE
   await executeQuery(conn, "START TRANSACTION");
   try {
     // owner -> cliente -> chofer -> estado -> dia -> {1:[],0:[]}
     for (const owner in Aprocesos) {
       const porCliente = Aprocesos[owner];
-
       for (const cliente in porCliente) {
         const porChofer = porCliente[cliente];
-
         for (const chofer in porChofer) {
           const porEstado = porChofer[chofer];
-
           for (const estado in porEstado) {
             const porDia = porEstado[estado];
-
             for (const dia in porDia) {
               const nodo = porDia[dia];
-              const pos = [...new Set(nodo[1] || [])]; // altas (unique por batch)
-              const neg = [...new Set(nodo[0] || [])]; // bajas (unique por batch)
+              const pos = [...new Set(nodo[1] || [])];
+              const neg = [...new Set(nodo[0] || [])];
               if (pos.length === 0 && neg.length === 0) continue;
 
-              // 1) Leer con lock por (owner, cliente, chofer, estado, dia)
               const sel = `
                 SELECT didsPaquete, didsPaquetes_cierre
                 FROM home_app
@@ -183,44 +198,29 @@ async function aplicarAprocesosAHommeApp(conn) {
               `;
               const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
-              // 2) Parsear actuales:
-              //    - historial: array (permite duplicados) -> solo ALTAS
-              //    - cierre: Set (sin duplicados) -> ALTAS y BAJAS
               let historialArr = [];
               let cierreSet = new Set();
 
               if (actual.length > 0) {
                 const sHist = actual[0].didsPaquete || "";
-                if (sHist.trim()) {
-                  // mantener duplicados del historial existente
-                  historialArr = sHist.split(",").map(x => x.trim()).filter(Boolean);
-                }
-
+                if (sHist.trim()) historialArr = sHist.split(",").map(x => x.trim()).filter(Boolean);
                 const sCierre = actual[0].didsPaquetes_cierre || "";
-                if (sCierre.trim()) {
-                  for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
-                }
+                if (sCierre.trim()) for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
               }
 
-              // 3) Aplicar positivos
               for (const p of pos) {
                 const k = String(p);
-                // Historial: append-only (permite repetidos)
-                historialArr.push(k);
-                // Cierre: conjunto vivo
-                cierreSet.add(k);
+                historialArr.push(k);   // historial append-only
+                cierreSet.add(k);       // vivo
               }
-
-              // 4) Aplicar negativos (solo afectan CIERRE; historial NO se toca)
               for (const p of neg) {
                 const k = String(p);
-                cierreSet.delete(k);
+                cierreSet.delete(k);    // baja solo en cierre
               }
 
               const didsPaqueteStr = historialArr.join(",");
               const didsPaquetesCierreStr = Array.from(cierreSet).join(",");
 
-              // 5) UPSERT atómico (NO toca 'pendientes')
               const upsert = `
                 INSERT INTO home_app
                   (didOwner, didCliente, didChofer, estado, didsPaquete, didsPaquetes_cierre, fecha, dia)
@@ -265,9 +265,8 @@ async function aplicarAprocesosAHommeApp(conn) {
 async function pendientesHoy() {
   try {
     const conn = await getConnectionLocal();
-    const FETCH = 1000;  // cuánto traigo de cdc por batch
+    const FETCH = 1000;
 
-    // Traigo 'estado' + 'fecha' desde cdc (incluye 'quien' para estado 0)
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
       FROM cdc
