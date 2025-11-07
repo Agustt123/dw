@@ -34,13 +34,24 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
 }
 
 // ---------- Builder para disparador = 'estado' ----------
-// ---------- Builder para disparador = 'estado' ----------
 async function buildAprocesosEstado(rows, connection) {
   for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
     const EST = nEstado(row.estado);
     if (!OW || EST === null) continue;
+
+    // Buscar estado previo (para dar BAJA de la combinación anterior)
+    // Nota: asumimos que row.id conserva el orden original de 'estado' desde el CDC
+    const qPrev = `
+      SELECT estado
+      FROM estado
+      WHERE didEnvio = ? AND didOwner = ? AND id < ?
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+    const prevRows = await executeQuery(connection, qPrev, [row.didPaquete, OW, row.id]);
+    const PREV = prevRows.length ? nEstado(prevRows[0].estado) : null;
 
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
@@ -50,11 +61,40 @@ async function buildAprocesosEstado(rows, connection) {
       ? (Number(row.quien) || 0)
       : (row.didChofer ?? 0);
 
+    // Si hubo cambio de estado, primero BAJAS de la combinación anterior
+    if (PREV !== null && PREV !== EST) {
+      // Global y por cliente (chofer=0)
+      pushNodo(OW, 0, 0, PREV, dia, 0, envio);
+      pushNodo(OW, CLI, 0, PREV, dia, 0, envio);
+      // Ajuste 69/70 global/cliente por estado previo
+      if (ESTADOS_69.has(PREV)) {
+        pushNodo(OW, 0, 0, 69, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 69, dia, 0, envio);
+      }
+      if (ESTADOS_70.has(PREV)) {
+        pushNodo(OW, 0, 0, 70, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 70, dia, 0, envio);
+      }
+      // Por chofer (si podemos inferirlo para este evento usamos CHO actual)
+      if (CHO !== 0) {
+        pushNodo(OW, CLI, CHO, PREV, dia, 0, envio);
+        pushNodo(OW, 0, CHO, PREV, dia, 0, envio);
+        if (ESTADOS_69.has(PREV)) {
+          pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
+          pushNodo(OW, 0, CHO, 69, dia, 0, envio);
+        }
+        if (ESTADOS_70.has(PREV)) {
+          pushNodo(OW, CLI, CHO, 70, dia, 0, envio);
+          pushNodo(OW, 0, CHO, 70, dia, 0, envio);
+        }
+      }
+    }
+
     // 1) ALTAS del estado real en chofer=0 (global y por cliente)
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // 2) Combinados 69/70 coherentes GLOBAL/CLIENTE (ALTAS o BAJAS)
+    // 2) Combinados 69/70 coherentes GLOBAL/CLIENTE (ALTAS o BAJAS según pertenencia)
     if (ESTADOS_69.has(EST)) {
       pushNodo(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
@@ -70,31 +110,24 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // 3) Si NO es estado 0, mandar BAJA a 0 (GLOBAL/CLIENTE)
-    if (EST !== 0) {
-      pushNodo(OW, 0, 0, 0, dia, 0, envio);
-      pushNodo(OW, CLI, 0, 0, dia, 0, envio);
-    }
-
-    // 4) Caso especial EST==0 con CHO informado: ALTAS por chofer (0 y 69)
+    // 3) Caso especial EST==0 con CHO informado: ALTAS por chofer (0 y 69)
     if (EST === 0 && CHO !== 0) {
       pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
       pushNodo(OW, 0, CHO, 0, dia, 1, envio);
+      // agregado 69 por chofer porque 0 ∈ ESTADOS_69
       pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
       pushNodo(OW, 0, CHO, 69, dia, 1, envio);
     }
 
-    // 5) **FIX**: si EST != 0 y CHO != 0 → limpiar 0 por chofer **y** DAR ALTA del estado real por chofer
+    // 4) Si EST != 0 y CHO != 0 → BAJA de 0 por chofer + ALTA del estado real por chofer
     if (EST !== 0 && CHO !== 0) {
       // BAJAS de 0 por chofer
       pushNodo(OW, CLI, CHO, 0, dia, 0, envio);
       pushNodo(OW, 0, CHO, 0, dia, 0, envio);
-
-      // **ALTA del estado real por chofer**
+      // ALTA del estado real por chofer
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
-
-      // 69 por chofer (coherente con EST)
+      // 69 por chofer
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
@@ -102,7 +135,7 @@ async function buildAprocesosEstado(rows, connection) {
         pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
         pushNodo(OW, 0, CHO, 69, dia, 0, envio);
       }
-      // 70 por chofer (coherente con EST)
+      // 70 por chofer
       if (ESTADOS_70.has(EST)) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
@@ -208,18 +241,23 @@ async function aplicarAprocesosAHommeApp(conn) {
               if (actual.length > 0) {
                 const sHist = actual[0].didsPaquete || "";
                 if (sHist.trim()) historialArr = sHist.split(",").map(x => x.trim()).filter(Boolean);
+
                 const sCierre = actual[0].didsPaquetes_cierre || "";
-                if (sCierre.trim()) for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
+                if (sCierre.trim()) {
+                  for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
+                }
               }
 
+              // ALTAS
               for (const p of pos) {
                 const k = String(p);
                 historialArr.push(k);   // historial append-only
-                cierreSet.add(k);       // vivo
+                cierreSet.add(k);       // cierre vivo
               }
+              // BAJAS (solo cierre)
               for (const p of neg) {
                 const k = String(p);
-                cierreSet.delete(k);    // baja solo en cierre
+                cierreSet.delete(k);
               }
 
               const didsPaqueteStr = historialArr.join(",");
