@@ -41,9 +41,10 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-ALTER TABLE envios
-ADD COLUMN haciaMl DATETIME NULL DEFAULT NULL;
+ALTER TABLE envios_items
+ADD COLUMN precio DOUBLE
 ;
+
 `;
 
 

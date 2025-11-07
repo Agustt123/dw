@@ -2,7 +2,7 @@ const { executeQuery, getConnectionLocal } = require("../../db");
 
 const Aprocesos = {};
 const idsProcesados = [];
-const LIMIT = 50;
+const LIMIT = 50; // (no usado, podés quitarlo si querés)
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
@@ -42,15 +42,6 @@ async function buildAprocesosEstado(rows, connection) {
     const EST = nEstado(row.estado);
     if (!OW || EST === null) continue;
 
-    // Evitar primer evento duplicado: si existe uno previo en 'estado', saltamos
-    const queryEstado = `
-      SELECT id FROM estado
-      WHERE didEnvio = ? AND didOwner = ? AND id < ?
-      ORDER BY id DESC LIMIT 1
-    `;
-    const estadoPrev = await executeQuery(connection, queryEstado, [row.didPaquete, OW, row.id]);
-    if (estadoPrev.length > 0) continue;
-
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
 
@@ -59,21 +50,34 @@ async function buildAprocesosEstado(rows, connection) {
       ? (Number(row.quien) || 0)
       : (row.didChofer ?? 0);
 
-    // 1) Siempre cargar estado REAL en chofer=0
+    // 1) Siempre cargar estado REAL en chofer=0 (global y por cliente) -> ALTAS
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // 2) Agregados 69/70 en chofer=0
+    // 2) Combinados 69/70 coherentes con el estado actual (ALTAS o BAJAS)
     if (ESTADOS_69.has(EST)) {
       pushNodo(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
+    } else {
+      pushNodo(OW, 0, 0, 69, dia, 0, envio);
+      pushNodo(OW, CLI, 0, 69, dia, 0, envio);
     }
+
     if (ESTADOS_70.has(EST)) {
       pushNodo(OW, 0, 0, 70, dia, 1, envio);
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
+    } else {
+      pushNodo(OW, 0, 0, 70, dia, 0, envio);
+      pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // 3) Si es estado 0 y CHO (desde 'quien') viene informado: cargar por chofer en 0 y 69
+    // 3) Si NO es estado 0, mandar BAJA a 0 (global y por cliente)
+    if (EST !== 0) {
+      pushNodo(OW, 0, 0, 0, dia, 0, envio);
+      pushNodo(OW, CLI, 0, 0, dia, 0, envio);
+    }
+
+    // 4) Si es estado 0 y CHO (desde 'quien') viene informado: cargar por chofer (0 y 69) -> ALTAS
     if (EST === 0 && CHO !== 0) {
       // estado 0 (por chofer)
       pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
