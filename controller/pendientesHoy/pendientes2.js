@@ -1,26 +1,29 @@
 const { executeQuery, getConnectionLocal } = require("../../db");
 
+// ----------------- Config -----------------
 const Aprocesos = {};
 const idsProcesados = [];
-const LIMIT = 50; // opcional
+const LIMIT = 50;
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
 
 const TZ = 'America/Argentina/Buenos_Aires';
+
 function getDiaFromTS(ts) {
   const d = new Date(ts);
   const ok = isNaN(d.getTime()) ? new Date() : d;
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
-  }).format(ok); // 'YYYY-MM-DD'
+  }).format(ok);
 }
+
 const nEstado = v => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
 
-// ---------- helpers ----------
+// ----------------- Helpers -----------------
 function ensure(o, k) { return (o[k] ??= {}); }
 function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   ensure(Aprocesos, owner);
@@ -33,7 +36,7 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
 }
 
-// ---------- Builder para disparador = 'estado' ----------
+// ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
   for (const row of rows) {
     const OW = row.didOwner;
@@ -41,60 +44,58 @@ async function buildAprocesosEstado(rows, connection) {
     const EST = nEstado(row.estado);
     if (!OW || EST === null) continue;
 
-    // Buscar estado previo (para dar BAJA de la combinación anterior)
-    // Nota: asumimos que row.id conserva el orden original de 'estado' desde el CDC
-    const qPrev = `
-      SELECT estado
-      FROM estado
-      WHERE didEnvio = ? AND didOwner = ? AND id < ?
-      ORDER BY id DESC
-      LIMIT 1
-    `;
-    const prevRows = await executeQuery(connection, qPrev, [row.didPaquete, OW, row.id]);
-    const PREV = prevRows.length ? nEstado(prevRows[0].estado) : null;
-
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
-
-    // CHO: si estado==0 tomamos 'quien'; si no, usamos didChofer
     const CHO = EST === 0
       ? (Number(row.quien) || 0)
       : (row.didChofer ?? 0);
 
-    // Si hubo cambio de estado, primero BAJAS de la combinación anterior
-    if (PREV !== null && PREV !== EST) {
-      // Global y por cliente (chofer=0)
-      pushNodo(OW, 0, 0, PREV, dia, 0, envio);
-      pushNodo(OW, CLI, 0, PREV, dia, 0, envio);
-      // Ajuste 69/70 global/cliente por estado previo
-      if (ESTADOS_69.has(PREV)) {
+    // 🔹 Buscar combinaciones vivas del envío en home_app y darlas de baja
+    const qPrev = `
+      SELECT estado, didChofer
+      FROM home_app
+      WHERE didOwner = ? AND FIND_IN_SET(?, didsPaquetes_cierre)
+    `;
+    const prevRows = await executeQuery(connection, qPrev, [OW, envio]);
+
+    for (const prev of prevRows) {
+      const PREV_EST = nEstado(prev.estado);
+      const PREV_CHO = Number(prev.didChofer) || 0;
+
+      // bajas global/cliente
+      pushNodo(OW, 0, 0, PREV_EST, dia, 0, envio);
+      pushNodo(OW, CLI, 0, PREV_EST, dia, 0, envio);
+
+      // bajas por chofer
+      if (PREV_CHO !== 0) {
+        pushNodo(OW, 0, PREV_CHO, PREV_EST, dia, 0, envio);
+        pushNodo(OW, CLI, PREV_CHO, PREV_EST, dia, 0, envio);
+      }
+
+      // bajas de 69/70 si aplicaban
+      if (ESTADOS_69.has(PREV_EST)) {
         pushNodo(OW, 0, 0, 69, dia, 0, envio);
         pushNodo(OW, CLI, 0, 69, dia, 0, envio);
+        if (PREV_CHO !== 0) {
+          pushNodo(OW, 0, PREV_CHO, 69, dia, 0, envio);
+          pushNodo(OW, CLI, PREV_CHO, 69, dia, 0, envio);
+        }
       }
-      if (ESTADOS_70.has(PREV)) {
+      if (ESTADOS_70.has(PREV_EST)) {
         pushNodo(OW, 0, 0, 70, dia, 0, envio);
         pushNodo(OW, CLI, 0, 70, dia, 0, envio);
-      }
-      // Por chofer (si podemos inferirlo para este evento usamos CHO actual)
-      if (CHO !== 0) {
-        pushNodo(OW, CLI, CHO, PREV, dia, 0, envio);
-        pushNodo(OW, 0, CHO, PREV, dia, 0, envio);
-        if (ESTADOS_69.has(PREV)) {
-          pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
-          pushNodo(OW, 0, CHO, 69, dia, 0, envio);
-        }
-        if (ESTADOS_70.has(PREV)) {
-          pushNodo(OW, CLI, CHO, 70, dia, 0, envio);
-          pushNodo(OW, 0, CHO, 70, dia, 0, envio);
+        if (PREV_CHO !== 0) {
+          pushNodo(OW, 0, PREV_CHO, 70, dia, 0, envio);
+          pushNodo(OW, CLI, PREV_CHO, 70, dia, 0, envio);
         }
       }
     }
 
-    // 1) ALTAS del estado real en chofer=0 (global y por cliente)
+    // 🔹 Altas del nuevo estado (global y por cliente)
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // 2) Combinados 69/70 coherentes GLOBAL/CLIENTE (ALTAS o BAJAS según pertenencia)
+    // 🔹 Combinados global/cliente coherentes
     if (ESTADOS_69.has(EST)) {
       pushNodo(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
@@ -102,6 +103,7 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, 0, 0, 69, dia, 0, envio);
       pushNodo(OW, CLI, 0, 69, dia, 0, envio);
     }
+
     if (ESTADOS_70.has(EST)) {
       pushNodo(OW, 0, 0, 70, dia, 1, envio);
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
@@ -110,24 +112,11 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // 3) Caso especial EST==0 con CHO informado: ALTAS por chofer (0 y 69)
-    if (EST === 0 && CHO !== 0) {
-      pushNodo(OW, CLI, CHO, 0, dia, 1, envio);
-      pushNodo(OW, 0, CHO, 0, dia, 1, envio);
-      // agregado 69 por chofer porque 0 ∈ ESTADOS_69
-      pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
-      pushNodo(OW, 0, CHO, 69, dia, 1, envio);
-    }
-
-    // 4) Si EST != 0 y CHO != 0 → BAJA de 0 por chofer + ALTA del estado real por chofer
-    if (EST !== 0 && CHO !== 0) {
-      // BAJAS de 0 por chofer
-      pushNodo(OW, CLI, CHO, 0, dia, 0, envio);
-      pushNodo(OW, 0, CHO, 0, dia, 0, envio);
-      // ALTA del estado real por chofer
+    // 🔹 Si hay chofer, altas por chofer
+    if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
-      // 69 por chofer
+
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
@@ -135,7 +124,7 @@ async function buildAprocesosEstado(rows, connection) {
         pushNodo(OW, CLI, CHO, 69, dia, 0, envio);
         pushNodo(OW, 0, CHO, 69, dia, 0, envio);
       }
-      // 70 por chofer
+
       if (ESTADOS_70.has(EST)) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
@@ -150,24 +139,22 @@ async function buildAprocesosEstado(rows, connection) {
   return Aprocesos;
 }
 
-// ---------- Builder para disparador = 'asignaciones' ----------
+// ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
   for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
-    const CHO = row.didChofer ?? 0;  // CHO != 0 => asignación; CHO == 0 => desasignación
-    const EST = nEstado(row.estado); // viene desde CDC
+    const CHO = row.didChofer ?? 0;
+    const EST = nEstado(row.estado);
     const envio = String(row.didPaquete);
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
 
-    // + al chofer actual en el estado indicado
     if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
 
-      // Agregados 69/70 por chofer
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
@@ -178,7 +165,6 @@ async function buildAprocesosAsignaciones(conn, rows) {
       }
     }
 
-    // DESASIGNACIÓN → BAJAS en chofer anterior (misma combinación de estado)
     const qChoferAnterior = `
       SELECT operador AS didChofer
       FROM asignaciones
@@ -209,10 +195,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
   return Aprocesos;
 }
 
+// ----------------- Aplicar batch -----------------
 async function aplicarAprocesosAHommeApp(conn) {
   await executeQuery(conn, "START TRANSACTION");
   try {
-    // owner -> cliente -> chofer -> estado -> dia -> {1:[],0:[]}
     for (const owner in Aprocesos) {
       const porCliente = Aprocesos[owner];
       for (const cliente in porCliente) {
@@ -241,20 +227,15 @@ async function aplicarAprocesosAHommeApp(conn) {
               if (actual.length > 0) {
                 const sHist = actual[0].didsPaquete || "";
                 if (sHist.trim()) historialArr = sHist.split(",").map(x => x.trim()).filter(Boolean);
-
                 const sCierre = actual[0].didsPaquetes_cierre || "";
-                if (sCierre.trim()) {
-                  for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
-                }
+                if (sCierre.trim()) for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
               }
 
-              // ALTAS
               for (const p of pos) {
                 const k = String(p);
-                historialArr.push(k);   // historial append-only
-                cierreSet.add(k);       // cierre vivo
+                historialArr.push(k);
+                cierreSet.add(k);
               }
-              // BAJAS (solo cierre)
               for (const p of neg) {
                 const k = String(p);
                 cierreSet.delete(k);
@@ -279,11 +260,11 @@ async function aplicarAprocesosAHommeApp(conn) {
                 didsPaquetesCierreStr,
                 dia
               ]);
-            } // dia
-          } // estado
-        } // chofer
-      } // cliente
-    } // owner
+            }
+          }
+        }
+      }
+    }
 
     await executeQuery(conn, "COMMIT");
   } catch (e) {
@@ -291,7 +272,6 @@ async function aplicarAprocesosAHommeApp(conn) {
     throw e;
   }
 
-  // marcar cdc como procesado (en batches)
   if (idsProcesados.length > 0) {
     const CHUNK = 1000;
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
@@ -304,6 +284,7 @@ async function aplicarAprocesosAHommeApp(conn) {
   }
 }
 
+// ----------------- Batch principal -----------------
 async function pendientesHoy() {
   try {
     const conn = await getConnectionLocal();
@@ -325,9 +306,7 @@ async function pendientesHoy() {
 
     await buildAprocesosEstado(rowsEstado, conn);
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
-
     await aplicarAprocesosAHommeApp(conn);
-
   } catch (err) {
     console.error("❌ Error batch:", err);
   }
