@@ -46,7 +46,7 @@ async function buildAprocesosEstado(rows, connection) {
 
     // CHO: si estado==0 tomamos 'quien'; si no, usamos didChofer
     const CHO = EST === 0
-      ? (Number(row.quien) || 0)
+      ? (Number(row.quien))
       : (row.didChofer ?? 0);
 
     // 1) ALTAS del estado real en chofer=0 (global y por cliente)
