@@ -2,7 +2,8 @@ const { getConnection, getConnectionLocal, executeQuery, redisClient } = require
 
 async function sincronizarEnviosParaTodasLasEmpresas() {
     while (true) {
-        let connDW;
+        let connDW = null;
+
         try {
             const empresaDataStr = await redisClient.get("empresasData");
             if (!empresaDataStr) {
@@ -15,7 +16,7 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
             const didOwners = Object.keys(empresaData);
 
             // ✅ UNA sola conexión DW por ciclo
-            connDW = await getConnectionLocal(0);
+            connDW = await getConnectionLocal();
 
             // Insert IGNORE
             for (const didOwnerStr of didOwners) {
@@ -30,7 +31,7 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
                 );
             }
 
-            // Procesar empresas (DW reutilizada)
+            // Procesar empresas (reusando connDW)
             for (const didOwnerStr of didOwners) {
                 const didOwner = parseInt(didOwnerStr, 10);
                 if (isNaN(didOwner)) continue;
@@ -47,9 +48,8 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
             console.error("❌ Error general en la sincronización:", error);
             await esperar(30000);
         } finally {
-            if (connDW && typeof connDW.end === "function") {
-                await connDW.end().catch(() => { });
-            }
+            // ✅ liberar SOLO una vez por ciclo
+            if (connDW) connDW.release();
         }
     }
 }
@@ -114,16 +114,12 @@ async function sincronizarEnviosParaTodasLasEmpresas2() {
 async function sincronizarEnviosBatchParaEmpresa(didOwner, connDW) {
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
-    let connEmpresa;
+    let connEmpresa = null;
 
     try {
-        try {
-            connEmpresa = await getConnection(didOwner);
-        } catch (err) {
-            console.error(`❌ Error al obtener conexión para empresa ${didOwner}:`, err);
-            return;
-        }
+        connEmpresa = await getConnection(didOwner);
 
+        // ⚠️ Ideal: cachear estas columnas (pero lo dejamos igual por ahora)
         const columnasEnviosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM envios")).map(c => c.Field);
         const columnasAsignacionesDW = (await executeQuery(connDW, "SHOW COLUMNS FROM asignaciones")).map(c => c.Field);
         const columnasEstadosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM estado")).map(c => c.Field);
@@ -137,10 +133,8 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner, connDW) {
     } catch (error) {
         console.error(`❌ Error procesando empresa ${didOwner}:`, error);
     } finally {
-        if (connEmpresa && typeof connEmpresa.release === "function") {
-            console.log(`[${didOwner}] Liberando conexión`);
-            connEmpresa.release();
-        }
+        // ✅ liberar SOLO la conexión de empresa (porque esa sí se abre acá)
+        if (connEmpresa?.release) connEmpresa.release();
     }
 }
 
