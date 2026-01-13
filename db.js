@@ -81,38 +81,54 @@ async function getConnection(idempresa) {
 
 
 // --- Conexión local al DW (sin pool, se puede mantener)
+const configBase = {
+    host: "149.56.182.49",
+    port: 44349,
+    user: "root",
+    password: "6vWe2M8NyZy9aE",
+};
+
+const dbName = "data";
+
+let dwPool;
+let dwInitPromise;
+
+async function initDW() {
+    // Crear DB una sola vez
+    const conn = await mysql.createConnection(configBase);
+    try {
+        await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+    } finally {
+        await conn.end().catch(() => { });
+    }
+
+    // Crear pool una sola vez
+    dwPool = mysql.createPool({
+        ...configBase,
+        database: dbName,
+        waitForConnections: true,
+        connectionLimit: 10,   // 👈 ajustá según tu server
+        queueLimit: 50,        // 👈 evita cola infinita
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
+    });
+}
+
 async function getConnectionLocal() {
     try {
+        if (!dwInitPromise) dwInitPromise = initDW();
+        await dwInitPromise;
 
-
-        const config = {
-            host: "149.56.182.49",
-            port: 44349,
-            user: "root",
-            password: "6vWe2M8NyZy9aE",
-        };
-
-        const dbName = `data`;
-        const connection = await mysql.createConnection(config);
-        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
-        await connection.end();
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const dbConnection = await mysql.createConnection({ ...config, database: dbName });
-        return dbConnection;
+        const conn = await dwPool.getConnection();
+        return conn;
     } catch (error) {
-        console.error(`❌ Error al obtener conexión local:`, error.message);
+        console.error("❌ Error al obtener conexión local:", error.message);
         throw {
             status: 500,
-            response: {
-                estado: false,
-                error: -1,
-                message: error.message,
-            },
+            response: { estado: false, error: -1, message: error.message },
         };
     }
 }
-
 // --- Redis helpers ---
 async function getFromRedis(key) {
     try {
