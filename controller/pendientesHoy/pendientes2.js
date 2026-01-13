@@ -312,7 +312,7 @@ async function pendientesHoy() {
   }
   finally {
     console.log("✅ Proceso de pendientesHoy finalizado");
-    await conn.relase();
+    await conn.release();
   }
 }
 

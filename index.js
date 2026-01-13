@@ -1,8 +1,14 @@
+// index.js
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const { redisClient, getFromRedis } = require("./db.js");
-const { sincronizarEnviosParaTodasLasEmpresas } = require("./controller/controllerEnvio.js");
+
+const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
+
+// 👇 OJO: en controllerEnvio.js tenés que exportar sincronizarEnviosUnaVez (ver nota abajo)
+const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
+
+
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 const informeColecta = require("./route/informe-colecta.js");
@@ -21,6 +27,13 @@ app.use(
 
 app.use("/informe-colecta", informeColecta);
 
+app.get("/ping", (req, res) => {
+    res.status(200).json({ estado: true, mensaje: "OK" });
+});
+
+const PORT = 13000;
+
+// ----------------- Empresas desde Redis -----------------
 let empresasDB = null;
 
 async function actualizarEmpresas() {
@@ -33,11 +46,9 @@ async function actualizarEmpresas() {
     }
 }
 
-// Asume empresasDB = { "2": {...}, "3": {...} }
 function obtenerDidOwners() {
     if (!empresasDB) return [];
 
-    // Si viene string JSON por algún motivo
     if (typeof empresasDB === "string") {
         try {
             empresasDB = JSON.parse(empresasDB);
@@ -53,27 +64,17 @@ function obtenerDidOwners() {
             .filter((n) => !isNaN(n));
     }
 
-    // Si fuera array, acá deberías mapear según estructura
     console.warn("⚠️ empresasDB no tiene formato objeto esperado:", typeof empresasDB);
     return [];
 }
 
-app.get("/ping", (req, res) => {
-    res.status(200).json({
-        estado: true,
-        mesanje: "Hola chris",
-    });
-});
-
-const PORT = 13000;
-
-
-async function correrCdcParaTodasLasEmpresas() {
+// ----------------- CDC + pendientes (una pasada) -----------------
+async function correrCdcYPendientesUnaVez() {
     await actualizarEmpresas();
-
     const didOwners = obtenerDidOwners();
+
     if (!didOwners.length) {
-        console.log("⚠️ No se encontraron empresas para correr CDC (empresasData vacío o inexistente).");
+        console.log("⚠️ No se encontraron empresas para CDC (empresasData vacío o inexistente).");
         return;
     }
 
@@ -83,52 +84,80 @@ async function correrCdcParaTodasLasEmpresas() {
         try {
             await EnviarcdAsignacion(didOwner);
             await EnviarcdcEstado(didOwner);
-
             console.log(`✅ CDC OK empresa ${didOwner}`);
         } catch (e) {
             console.error(`❌ Error CDC empresa ${didOwner}:`, e);
         }
     }
 
-    // Si pendientesHoy es global, llamala una vez:
+    // pendientesHoy es global (procesa didOwner desde la tabla cdc)
     try {
-        pendientesHoy();
+        await pendientesHoy(); // si tu pendientesHoy NO es async, sacale el await
         console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e);
     }
-
-    // Si pendientesHoy fuera por empresa, sería así:
-    // for (const didOwner of didOwners) await pendientesHoy(didOwner);
 }
 
+// ----------------- Schedulers (sin while(true)) -----------------
+function iniciarSchedulers() {
+    // Envios: cada 30s (ajustá)
+    let runningEnvios = false;
+    setInterval(async () => {
+        if (runningEnvios) {
+            console.log("⏭️ Envios: ciclo saltado (todavía en ejecución)");
+            return;
+        }
+        runningEnvios = true;
+        try {
+            console.log("🔁 Envios: iniciando sincronización...");
+            await sincronizarEnviosUnaVez();
+            console.log("✅ Envios: sincronización completada");
+        } catch (e) {
+            console.error("❌ Envios: error en ciclo:", e);
+        } finally {
+            runningEnvios = false;
+        }
+    }, 30 * 1000);
+
+    // CDC + pendientes: cada 1 min (ajustá)
+    let runningCdc = false;
+    setInterval(async () => {
+        if (runningCdc) {
+            console.log("⏭️ CDC/pendientes: ciclo saltado (todavía en ejecución)");
+            return;
+        }
+        runningCdc = true;
+        try {
+            await correrCdcYPendientesUnaVez();
+            console.log("✅ CDC/pendientes: ciclo completado");
+        } catch (e) {
+            console.error("❌ CDC/pendientes: error en ciclo:", e);
+        } finally {
+            runningCdc = false;
+        }
+    }, 1 * 60 * 1000);
+}
+
+// ----------------- Boot -----------------
 (async () => {
     try {
         await actualizarEmpresas();
 
-        // ✅ Envios para todas (loop infinito) - NO usar await
-        sincronizarEnviosParaTodasLasEmpresas();
+        // Primera corrida inmediata (sin esperar al primer intervalo)
+        try {
+            await sincronizarEnviosUnaVez();
+        } catch (e) {
+            console.error("❌ Envios: error en primera corrida:", e);
+        }
 
-        // ✅ Primera corrida inmediata de CDC/pendientes para todas
-        await correrCdcParaTodasLasEmpresas();
+        try {
+            await correrCdcYPendientesUnaVez();
+        } catch (e) {
+            console.error("❌ CDC/pendientes: error en primera corrida:", e);
+        }
 
-        // ✅ Intervalo (evita solaparse)
-        let running = false;
-        setInterval(async () => {
-            if (running) {
-                console.log("⏭️ Ciclo CDC/pendientes saltado: ya hay uno en curso");
-                return;
-            }
-            running = true;
-            try {
-                await correrCdcParaTodasLasEmpresas();
-                console.log("✅ Ciclo CDC/pendientes completado");
-            } catch (e) {
-                console.error("❌ Error en ciclo CDC/pendientes:", e);
-            } finally {
-                running = false;
-            }
-        }, 1 * 60 * 1000);
+        iniciarSchedulers();
 
         app.listen(PORT, () => {
             console.log(`Servidor escuchando en http://localhost:${PORT}`);
@@ -141,7 +170,20 @@ async function correrCdcParaTodasLasEmpresas() {
             } catch (e) {
                 console.error("Error desconectando Redis:", e);
             }
+            try {
+                if (typeof closeDWPool === "function") await closeDWPool();
+            } catch (e) {
+                console.error("Error cerrando DW pool:", e);
+            }
             process.exit();
+        });
+
+        // Recomendado: loguear errores no manejados para que no “muera silencioso”
+        process.on("unhandledRejection", (reason) => {
+            console.error("❌ unhandledRejection:", reason);
+        });
+        process.on("uncaughtException", (err) => {
+            console.error("❌ uncaughtException:", err);
         });
     } catch (err) {
         console.error("❌ Error al iniciar el servidor:", err);
