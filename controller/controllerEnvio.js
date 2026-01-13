@@ -2,61 +2,58 @@ const { getConnection, getConnectionLocal, executeQuery, redisClient } = require
 
 async function sincronizarEnviosParaTodasLasEmpresas() {
     while (true) {
-        const connDWTemp = await getConnectionLocal(0); // conexión temporal para DW
+        let connDW;
         try {
             const empresaDataStr = await redisClient.get("empresasData");
-
             if (!empresaDataStr) {
                 console.error("❌ No se encontró 'empresasData' en Redis.");
-                await esperar(30000); // Espera 30 segundos antes de volver a intentar
+                await esperar(30000);
                 continue;
             }
 
             const empresaData = JSON.parse(empresaDataStr);
-            const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
+            const didOwners = Object.keys(empresaData);
 
-            // Insertar todos los didOwners si no existen
+            // ✅ UNA sola conexión DW por ciclo
+            connDW = await getConnectionLocal(0);
+
+            // Insert IGNORE
             for (const didOwnerStr of didOwners) {
                 const didOwner = parseInt(didOwnerStr, 10);
                 if (isNaN(didOwner)) continue;
 
-
                 await executeQuery(
-                    connDWTemp,
+                    connDW,
                     `INSERT IGNORE INTO envios_max_ids (didOwner, idMaxEnvios, idMaxAsignaciones, idMaxEstados)
-                     VALUES (?, 0, 0, 0)`,
+           VALUES (?, 0, 0, 0)`,
                     [didOwner]
                 );
             }
-            await connDWTemp.end();
 
-            // Procesar cada empresa, una tanda de hasta 100 registros
+            // Procesar empresas (DW reutilizada)
             for (const didOwnerStr of didOwners) {
                 const didOwner = parseInt(didOwnerStr, 10);
                 if (isNaN(didOwner)) continue;
 
                 try {
-                    await sincronizarEnviosBatchParaEmpresa(didOwner);
+                    await sincronizarEnviosBatchParaEmpresa(didOwner, connDW);
                 } catch (error) {
-                    console.error(`❌ Error sincronizando datos para empresa ${didOwner}:`, error);
+                    console.error(`❌ Error sincronizando empresa ${didOwner}:`, error);
                 }
             }
 
-            // Pausa para no saturar el servidor (ejemplo: 10 segundos)
             await esperar(10000);
-
         } catch (error) {
             console.error("❌ Error general en la sincronización:", error);
-            await esperar(30000); // Espera 30 segundos si falla algo grave
-        }
-        finally {
-            // Asegurarse de cerrar la conexión temporal si aún está abierta
-            if (connDWTemp && typeof connDWTemp.end === "function") {
-                await connDWTemp.end();
+            await esperar(30000);
+        } finally {
+            if (connDW && typeof connDW.end === "function") {
+                await connDW.end().catch(() => { });
             }
         }
     }
 }
+
 async function sincronizarEnviosParaTodasLasEmpresas2() {
     while (true) {
         try {
@@ -114,31 +111,25 @@ async function sincronizarEnviosParaTodasLasEmpresas2() {
         }
     }
 }
-async function sincronizarEnviosBatchParaEmpresa(didOwner) {
+async function sincronizarEnviosBatchParaEmpresa(didOwner, connDW) {
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
     let connEmpresa;
-    let connDW;
 
     try {
         try {
             connEmpresa = await getConnection(didOwner);
         } catch (err) {
             console.error(`❌ Error al obtener conexión para empresa ${didOwner}:`, err);
-            return; // Salir del batch, sin continuar
+            return;
         }
-        connDW = await getConnectionLocal(didOwner);
 
         const columnasEnviosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM envios")).map(c => c.Field);
         const columnasAsignacionesDW = (await executeQuery(connDW, "SHOW COLUMNS FROM asignaciones")).map(c => c.Field);
         const columnasEstadosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM estado")).map(c => c.Field);
 
         await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW);
-        console.log(`✅ Envios sincronizados para empresa ${didOwner}`);
-
         await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW);
-        console.log(`✅ Asignaciones sincronizadas para empresa ${didOwner}`);
-
         await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW);
         await procesarEliminaciones(connEmpresa, connDW, didOwner);
 
@@ -146,15 +137,9 @@ async function sincronizarEnviosBatchParaEmpresa(didOwner) {
     } catch (error) {
         console.error(`❌ Error procesando empresa ${didOwner}:`, error);
     } finally {
-        // Liberar si existe y tiene release
         if (connEmpresa && typeof connEmpresa.release === "function") {
             console.log(`[${didOwner}] Liberando conexión`);
             connEmpresa.release();
-        }
-
-        // Si querés cerrar la conexión local explícitamente (aunque no es un pool)
-        if (connDW && typeof connDW.end === "function") {
-            await connDW.end();
         }
     }
 }
