@@ -81,36 +81,57 @@ async function getConnection(idempresa) {
 
 
 // --- Conexión local al DW (sin pool, se puede mantener)
+// --- DW/local con POOL ---
+const dwConfigBase = {
+    host: "149.56.182.49",
+    port: 44349,
+    user: "root",
+    password: "6vWe2M8NyZy9aE",
+};
+
+const dwDbName = "data";
+
+let dwPool = null;
+let dwInitPromise = null;
+
+async function initDWPool() {
+    // crear DB UNA sola vez
+    const c = await mysql.createConnection(dwConfigBase);
+    try {
+        await c.query(`CREATE DATABASE IF NOT EXISTS \`${dwDbName}\``);
+    } finally {
+        await c.end().catch(() => { });
+    }
+
+    // pool (reutiliza conexiones)
+    dwPool = mysql.createPool({
+        ...dwConfigBase,
+        database: dwDbName,
+        waitForConnections: true,
+        connectionLimit: 5,  // 👈 ponelo bajo (5-10). Si querés "1 sola", poné 1.
+        queueLimit: 50,      // 👈 evita cola infinita
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
+    });
+}
+
 async function getConnectionLocal() {
     try {
-
-
-        const config = {
-            host: "149.56.182.49",
-            port: 44349,
-            user: "root",
-            password: "6vWe2M8NyZy9aE",
-        };
-
-        const dbName = `data`;
-        const connection = await mysql.createConnection(config);
-        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
-        await connection.end();
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const dbConnection = await mysql.createConnection({ ...config, database: dbName });
-        return dbConnection;
+        if (!dwInitPromise) dwInitPromise = initDWPool();
+        await dwInitPromise;
+        return await dwPool.getConnection();
     } catch (error) {
-        console.error(`❌ Error al obtener conexión local:`, error.message);
+        console.error("❌ Error al obtener conexión local:", error.message);
         throw {
             status: 500,
-            response: {
-                estado: false,
-                error: -1,
-                message: error.message,
-            },
+            response: { estado: false, error: -1, message: error.message },
         };
     }
+}
+
+// opcional para cerrar limpio
+async function closeDWPool() {
+    if (dwPool) await dwPool.end().catch(() => { });
 }
 
 // --- Redis helpers ---
