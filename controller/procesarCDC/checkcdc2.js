@@ -10,7 +10,7 @@ async function EnviarcdcEstado(didOwner) {
         const selectQuery = `
       SELECT didOwner, didEnvio, estado, autofecha,quien,didCadete
       FROM estado
-      WHERE cdc = 0 AND didOwner = ? AND autofecha >= '2025-10-10 00:00:00'
+      WHERE cdc = 0 AND didOwner = ? 
       LIMIT 50
     `;
 
@@ -160,4 +160,3 @@ module.exports = {
     EnviarcdcEstado,
     EnviarcdAsignacion
 };
-895340

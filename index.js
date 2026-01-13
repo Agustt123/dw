@@ -67,6 +67,7 @@ app.get("/ping", (req, res) => {
 
 const PORT = 13000;
 
+
 async function correrCdcParaTodasLasEmpresas() {
     await actualizarEmpresas();
 
