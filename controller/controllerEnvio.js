@@ -19,7 +19,7 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
             for (const didOwnerStr of didOwners) {
                 const didOwner = parseInt(didOwnerStr, 10);
                 if (isNaN(didOwner)) continue;
-                if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
+
 
                 await executeQuery(
                     connDWTemp,

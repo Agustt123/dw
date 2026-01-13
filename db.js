@@ -36,6 +36,7 @@ let companiesList = {};
 
 // --- Conexión a la base de datos de producción por empresa (usando pool y `USE`)
 async function getConnection(idempresa) {
+    let connection;
     try {
         console.log("🔄 idempresa recibido:", idempresa);
 
@@ -43,29 +44,41 @@ async function getConnection(idempresa) {
             throw new Error(`idempresa debe ser string o number, recibido: ${typeof idempresa}`);
         }
 
-        const redisKey = "empresasData";
-        const empresasData = await getFromRedis(redisKey);
-
+        const empresasData = await getFromRedis("empresasData");
         if (!empresasData) throw new Error("No se encontraron datos en Redis.");
+
         const empresa = empresasData[String(idempresa)];
         if (!empresa) throw new Error(`No se encontró empresa con ID: ${idempresa}`);
+        if (!empresa.dbname) throw new Error(`La empresa ${idempresa} no tiene dbname`);
 
-        const connection = await superPool.getConnection();
-        await connection.query(`USE \`${empresa.dbname}\``); // Cambia a la base específica
+        connection = await superPool.getConnection();
+
+        // Importante: USE puede fallar por permisos => si falla, liberamos el connection en catch
+        await connection.query(`USE \`${empresa.dbname}\``);
 
         return connection;
     } catch (error) {
-        console.error("❌ Error al obtener conexión:", error.message);
+        // ✅ liberar SIEMPRE si fue tomada del pool
+        try {
+            if (connection && typeof connection.release === "function") connection.release();
+            else if (connection && typeof connection.end === "function") await connection.end();
+            else if (connection && typeof connection.destroy === "function") connection.destroy();
+        } catch (_) { }
+
+        const msg = error?.message || String(error);
+        console.error("❌ Error al obtener conexión:", msg);
+
         throw {
             status: 500,
             response: {
                 estado: false,
                 error: -1,
-                message: error.message,
+                message: msg,
             },
         };
     }
 }
+
 
 // --- Conexión local al DW (sin pool, se puede mantener)
 async function getConnectionLocal() {
