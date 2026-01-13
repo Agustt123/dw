@@ -365,5 +365,5 @@ function esperar(ms) {
 }
 
 module.exports = {
-    sincronizarEnviosParaTodasLasEmpresas2,
+    sincronizarEnviosParaTodasLasEmpresas,
 };

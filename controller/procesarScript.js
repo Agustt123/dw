@@ -19,6 +19,12 @@ async function ejecutarQueryParaTodasLasEmpresas(query, values = []) {
             try {
                 const conn = await getConnection(didOwner);
                 await executeQuery(conn, query, values);
+
+                if (rows.length > 0) {
+                    console.log(`📌 Empresa ${didOwner} → Encontrado:`);
+                    console.log(rows);
+                    return rows; // ← Devuelvo el encontrado
+                }
                 await conn.end();
                 console.log(`✅ Query ejecutada para empresa ${didOwner}`);
             } catch (err) {
@@ -41,64 +47,104 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-ALTER TABLE envios_items
-ADD COLUMN precio DOUBLE
-;
-
-`;
+         ALTER TABLE clientes_cuentas_metodos_envios
+ADD COLUMN data LONGTEXT NULL;
 
 
+        `;
 
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
-            if (didOwner == "275" || didOwner == "276" || didOwner == "345") continue;
 
-            // if (didOwner <= 276) continue;
+            // Comparación correcta entre números
+            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
 
             const conn = await getConnection(didOwner);
             try {
                 await executeQuery(conn, query, []);
                 await conn.release();
-                console.log(`✅ Fechas corregidas para empresa ${didOwner}`);
+                console.log(`✅ Query ejecutada para empresa ${didOwner}`);
             } catch (err) {
                 await conn.release();
-                console.error(`❌ Error corrigiendo fechas para empresa ${didOwner}:`, err.message);
+                console.error(`❌ Error ejecutando query para empresa ${didOwner}:`, err.message);
             }
         }
     } catch (err) {
         console.error("❌ Error general en corregirFechasHistorialTodasEmpresas:", err.message);
     }
 }
-async function actualizarIngresoAutomatico(didOwner) {
-    const sellerIds = [
-        274473795, 514006956, 78409777, 650441900, 288904545, 277435068,
-        256872671, 735692880, 433564012, 404622472, 617634017, 45290997,
-        50929990, 148545940, 37284960, 214472081, 84823381, 161946607,
-        78793078, 80873335, 1823613961, 1788465836, 97487586, 1940032990,
-        204129231, 58578515, 201367212, 58391878, 627497479, 2155601390,
-        211148642
-    ];
 
+
+async function listarEmpresasConCostoChofer() {
     try {
-        const conn = await getConnection(didOwner);
+        const empresaDataStr = await redisClient.get("empresasData");
 
-        // Armar placeholders dinámicos
-        const placeholders = sellerIds.map(() => '?').join(',');
+        if (!empresaDataStr) {
+            console.error("❌ No se encontró 'empresasData' en Redis.");
+            return;
+        }
 
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
+
+        // Consulta para ver si existe al menos 1 registro en cada tabla
         const query = `
-            UPDATE clientes_cuentas
-            SET ingreso_automatico = 0
-            WHERE ML_id_vendedor IN (${placeholders} AND superado = 0 AND elim = 0)
+            SELECT
+                EXISTS(SELECT 1 FROM lista_costochofer              LIMIT 1) AS has_lista_costochofer,
+                EXISTS(SELECT 1 FROM lista_costochofer_servicios   LIMIT 1) AS has_lista_costochofer_servicios,
+                EXISTS(SELECT 1 FROM lista_costochofer_zonas       LIMIT 1) AS has_lista_costochofer_zonas
         `;
 
-        await executeQuery(conn, query, sellerIds);
-        await conn.release();
+        const empresasConDatos = [];
 
-        console.log(`✅ Actualizado ingreso_automatico = 0 para ${sellerIds.length} sellers en empresa ${didOwner}`);
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (isNaN(didOwner)) continue;
+
+            // Tus exclusiones
+            if (didOwner == "275" || didOwner == "276" || didOwner == "345" || didOwner == "82" || didOwner == "204" || didOwner == "223" || didOwner == "244" || didOwner == "253") continue;
+            // if (didOwner <= 276) continue;
+
+            const conn = await getConnection(didOwner);
+
+            try {
+                const rows = await executeQuery(conn, query, []);
+                await conn.release();
+
+                const result = rows[0];
+                const tieneAlgo =
+                    result.has_lista_costochofer === 1 ||
+                    result.has_lista_costochofer_servicios === 1 ||
+                    result.has_lista_costochofer_zonas === 1;
+
+                if (tieneAlgo) {
+                    empresasConDatos.push({
+                        didOwner,
+                        lista_costochofer: !!result.has_lista_costochofer,
+                        lista_costochofer_servicios: !!result.has_lista_costochofer_servicios,
+                        lista_costochofer_zonas: !!result.has_lista_costochofer_zonas,
+                    });
+                    console.log(`✅ Empresa ${didOwner} tiene datos en alguna de las tablas de costo chofer`);
+                } else {
+                    console.log(`➡️ Empresa ${didOwner} SIN datos en tablas de costo chofer`);
+                }
+
+            } catch (err) {
+                await conn.release();
+                console.error(`❌ Error consultando empresa ${didOwner}:`, err.message);
+            }
+        }
+
+        console.log("📋 Lista de empresas con datos de costo chofer:");
+        console.log(empresasConDatos.map(e => e.didOwner));
+
+        // Por si querés usar la info desde otro lado
+        return empresasConDatos;
+
     } catch (err) {
-        console.error(`❌ Error actualizando empresa ${didOwner}:`, err.message);
+        console.error("❌ Error general en listarEmpresasConCostoChofer:", err.message);
     }
 }
 
