@@ -4,11 +4,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 
 const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
-
-// 👇 OJO: en controllerEnvio.js tenés que exportar sincronizarEnviosUnaVez (ver nota abajo)
 const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
-
-
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 const informeColecta = require("./route/informe-colecta.js");
@@ -90,18 +86,17 @@ async function correrCdcYPendientesUnaVez() {
         }
     }
 
-    // pendientesHoy es global (procesa didOwner desde la tabla cdc)
     try {
-        await pendientesHoy(); // si tu pendientesHoy NO es async, sacale el await
+        await pendientesHoy(); // si tu pendientesHoy no es async, sacale el await
         console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e);
     }
 }
 
-// ----------------- Schedulers (sin while(true)) -----------------
+// ----------------- Schedulers (todo cada 1 min, sin corrida inicial) -----------------
 function iniciarSchedulers() {
-    // Envios: cada 30s (ajustá)
+    // Envios: cada 1 min
     let runningEnvios = false;
     setInterval(async () => {
         if (runningEnvios) {
@@ -118,9 +113,9 @@ function iniciarSchedulers() {
         } finally {
             runningEnvios = false;
         }
-    }, 30 * 1000);
+    }, 1 * 60 * 1000);
 
-    // CDC + pendientes: cada 1 min (ajustá)
+    // CDC + pendientes: cada 1 min
     let runningCdc = false;
     setInterval(async () => {
         if (runningCdc) {
@@ -144,19 +139,6 @@ function iniciarSchedulers() {
     try {
         await actualizarEmpresas();
 
-        // Primera corrida inmediata (sin esperar al primer intervalo)
-        try {
-            await sincronizarEnviosUnaVez();
-        } catch (e) {
-            console.error("❌ Envios: error en primera corrida:", e);
-        }
-
-        try {
-            await correrCdcYPendientesUnaVez();
-        } catch (e) {
-            console.error("❌ CDC/pendientes: error en primera corrida:", e);
-        }
-
         iniciarSchedulers();
 
         app.listen(PORT, () => {
@@ -178,7 +160,6 @@ function iniciarSchedulers() {
             process.exit();
         });
 
-        // Recomendado: loguear errores no manejados para que no “muera silencioso”
         process.on("unhandledRejection", (reason) => {
             console.error("❌ unhandledRejection:", reason);
         });
