@@ -2,6 +2,7 @@ const { getConnection, getConnectionLocal, executeQuery, redisClient } = require
 
 async function sincronizarEnviosParaTodasLasEmpresas() {
     while (true) {
+        const connDWTemp = await getConnectionLocal(0); // conexión temporal para DW
         try {
             const empresaDataStr = await redisClient.get("empresasData");
 
@@ -15,7 +16,6 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
             const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
             // Insertar todos los didOwners si no existen
-            const connDWTemp = await getConnectionLocal(0); // conexión temporal para DW
             for (const didOwnerStr of didOwners) {
                 const didOwner = parseInt(didOwnerStr, 10);
                 if (isNaN(didOwner)) continue;
@@ -48,6 +48,12 @@ async function sincronizarEnviosParaTodasLasEmpresas() {
         } catch (error) {
             console.error("❌ Error general en la sincronización:", error);
             await esperar(30000); // Espera 30 segundos si falla algo grave
+        }
+        finally {
+            // Asegurarse de cerrar la conexión temporal si aún está abierta
+            if (connDWTemp && typeof connDWTemp.end === "function") {
+                await connDWTemp.end();
+            }
         }
     }
 }

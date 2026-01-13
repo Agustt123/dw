@@ -286,8 +286,8 @@ async function aplicarAprocesosAHommeApp(conn) {
 
 // ----------------- Batch principal -----------------
 async function pendientesHoy() {
+  const conn = await getConnectionLocal();
   try {
-    const conn = await getConnectionLocal();
     const FETCH = 1000;
 
     const selectCDC = `
@@ -309,6 +309,10 @@ async function pendientesHoy() {
     await aplicarAprocesosAHommeApp(conn);
   } catch (err) {
     console.error("❌ Error batch:", err);
+  }
+  finally {
+    console.log("✅ Proceso de pendientesHoy finalizado");
+    await conn.release();
   }
 }
 
