@@ -66,7 +66,7 @@ async function correrCdcYPendientesUnaVez() {
             // ✅ timeout por empresa para que no se cuelgue
             await withTimeout(EnviarcdAsignacion(didOwner), 20000, `CDC asignacion ${didOwner}`);
             await withTimeout(EnviarcdcEstado(didOwner), 20000, `CDC estado ${didOwner}`);
-            console.log(`✅ CDC OK empresa ${didOwner}`);
+            // console.log(`✅ CDC OK empresa ${didOwner}`);
         } catch (e) {
             console.error(`❌ Error CDC empresa ${didOwner}:`, e.message || e);
         }
@@ -74,7 +74,7 @@ async function correrCdcYPendientesUnaVez() {
 
     try {
         await withTimeout(pendientesHoy(), 30000, "pendientesHoy");
-        console.log("✅ pendientesHoy OK");
+        // console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e.message || e);
     }
@@ -113,9 +113,9 @@ function iniciarSchedulerUnico() {
                     console.log(`   - ${owner}: envios=${m.envios}, asig=${m.asignaciones}, estados=${m.estados}, elim=${m.eliminaciones}`);
                 }
             }
-            console.log("🔁 CDC/pendientes: iniciando...");
+            //   console.log("🔁 CDC/pendientes: iniciando...");
             await correrCdcYPendientesUnaVez();
-            console.log("✅ CDC/pendientes: completado");
+            // console.log("✅ CDC/pendientes: completado");
         } catch (e) {
             console.error("❌ Error en ciclo scheduler:", e.message || e);
         } finally {

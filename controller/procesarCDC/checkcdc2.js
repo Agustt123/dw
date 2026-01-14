@@ -41,7 +41,7 @@ async function EnviarcdcEstado(didOwner) {
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
 
         if (rows.length === 0) {
-            console.log(`ℹ️ No hay estados pendientes de CDC para el didOwner ${didOwner}`);
+            //     console.log(`ℹ️ No hay estados pendientes de CDC para el didOwner ${didOwner}`);
             return;
         }
 
@@ -80,11 +80,11 @@ async function EnviarcdcEstado(didOwner) {
 
             const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
             if (result.affectedRows === 0) {
-                console.log(`ℹ️ No se pudo actualizar el estado para didEnvio ${didEnvio}`);
+                //   console.log(`ℹ️ No se pudo actualizar el estado para didEnvio ${didEnvio}`);
                 continue;
             }
 
-            console.log(`✅ CDC insertado x${ejecutadores.length} (estado) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            //  console.log(`✅ CDC insertado x${ejecutadores.length} (estado) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}:`, error);
@@ -124,7 +124,7 @@ async function EnviarcdAsignacion(didOwner) {
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
 
         if (rows.length === 0) {
-            console.log(`ℹ️ No hay asignaciones pendientes de CDC para el didOwner ${didOwner}`);
+            //       console.log(`ℹ️ No hay asignaciones pendientes de CDC para el didOwner ${didOwner}`);
             return;
         }
 
@@ -164,7 +164,7 @@ async function EnviarcdAsignacion(didOwner) {
 
             await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
 
-            console.log(`✅ CDC insertado x${ejecutadores.length} (asignaciones) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            //      console.log(`✅ CDC insertado x${ejecutadores.length} (asignaciones) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}:`, error);

@@ -289,7 +289,7 @@ async function aplicarAprocesosAHommeApp(conn) {
       const slice = idsProcesados.length > CHUNK ? idsProcesados.slice(i, i + CHUNK) : idsProcesados;
       const updCdc = `UPDATE cdc SET procesado=1 WHERE id IN (${slice.map(() => '?').join(',')})`;
       await executeQuery(conn, updCdc, slice);
-      console.log("✅ CDC marcado como procesado para", slice.length, "rows");
+      //     console.log("✅ CDC marcado como procesado para", slice.length, "rows");
       if (idsProcesados.length <= CHUNK) break;
     }
   }
@@ -322,7 +322,7 @@ async function pendientesHoy() {
     console.error("❌ Error batch:", err);
   }
   finally {
-    console.log("✅ Proceso de pendientesHoy finalizado");
+    //   console.log("✅ Proceso de pendientesHoy finalizado");
     await conn.release();
   }
 }
