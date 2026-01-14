@@ -221,28 +221,39 @@ async function aplicarAprocesosAHommeApp(conn) {
               `;
               const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
-              let historialArr = [];
+              let historialSet = new Set();
               let cierreSet = new Set();
 
               if (actual.length > 0) {
                 const sHist = actual[0].didsPaquete || "";
-                if (sHist.trim()) historialArr = sHist.split(",").map(x => x.trim()).filter(Boolean);
+                if (sHist.trim()) {
+                  for (const x of sHist.split(",").map(t => t.trim()).filter(Boolean)) {
+                    historialSet.add(x);
+                  }
+                }
+
                 const sCierre = actual[0].didsPaquetes_cierre || "";
-                if (sCierre.trim()) for (const p of sCierre.split(",").map(x => x.trim()).filter(Boolean)) cierreSet.add(p);
+                if (sCierre.trim()) {
+                  for (const x of sCierre.split(",").map(t => t.trim()).filter(Boolean)) {
+                    cierreSet.add(x);
+                  }
+                }
               }
 
               for (const p of pos) {
                 const k = String(p);
-                historialArr.push(k);
+                historialSet.add(k);   // ✅ no repite
                 cierreSet.add(k);
               }
+
               for (const p of neg) {
                 const k = String(p);
-                cierreSet.delete(k);
+                cierreSet.delete(k);   // (historial no se borra)
               }
 
-              const didsPaqueteStr = historialArr.join(",");
+              const didsPaqueteStr = Array.from(historialSet).join(",");
               const didsPaquetesCierreStr = Array.from(cierreSet).join(",");
+
 
               const upsert = `
                 INSERT INTO home_app
