@@ -74,6 +74,7 @@ async function sincronizarEnviosBatchParaEmpresa(
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
     let connEmpresa = null;
+    let connEmpresaBad = false;
 
     try {
         connEmpresa = await getConnection(didOwner);
@@ -85,11 +86,32 @@ async function sincronizarEnviosBatchParaEmpresa(
 
         console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
     } catch (error) {
-        console.error(`❌ Error procesando empresa ${didOwner}:`, error);
+        // ✅ si el error sugiere conexión “envenenada”, la marcamos para destruir
+        const msg = String(error?.message || error).toLowerCase();
+        const code = error?.code;
+
+        if (
+            error?.__shouldDestroyConnection ||            // si lo marcás desde executeQuery
+            code === "PROTOCOL_CONNECTION_LOST" ||
+            code === "ECONNRESET" ||
+            code === "ETIMEDOUT" ||
+            msg.includes("timeout")
+        ) {
+            connEmpresaBad = true;
+        }
+
+        console.error(`❌ Error procesando empresa ${didOwner}:`, error?.message || error);
     } finally {
-        if (connEmpresa?.release) {
+        if (!connEmpresa) return;
+
+        if (connEmpresaBad && typeof connEmpresa.destroy === "function") {
+            console.log(`[${didOwner}] 🔥 Destruyendo conexión empresa (timeout/red)`);
+            connEmpresa.destroy(); // ✅ NO vuelve al pool
+        } else if (typeof connEmpresa.release === "function") {
             console.log(`[${didOwner}] Liberando conexión empresa`);
-            connEmpresa.release();
+            connEmpresa.release(); // ✅ vuelve al pool OK
+        } else if (typeof connEmpresa.end === "function") {
+            await connEmpresa.end();
         }
     }
 }

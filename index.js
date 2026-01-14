@@ -103,7 +103,7 @@ function iniciarSchedulerUnico() {
         } finally {
             running = false;
         }
-    }, 55 * 1000); // cada 1 min
+    }, 55 * 1000); // 55 segundos
 }
 
 (async () => {

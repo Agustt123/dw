@@ -167,17 +167,34 @@ async function loadCompaniesFromRedis() {
     }
 }
 
-async function executeQuery(connection, query, values = [], log = false) {
+async function executeQuery(connection, query, values = [], opts = {}) {
+    const { log = false, timeoutMs = 20000 } = opts;
+
     try {
         if (log) logYellow(`Ejecutando: ${query} con valores: ${JSON.stringify(values)}`);
-        const [results] = await connection.query(query, values);
+
+        const [results] = await connection.query({
+            sql: query,
+            values,
+            timeout: timeoutMs, // ✅ timeout real (ms)
+        });
+
         if (log) logYellow(`✅ Resultados: ${JSON.stringify(results)}`);
         return results;
     } catch (error) {
         if (log) logRed(`❌ Error en query: ${error.message}`);
+
+        // marcadores típicos de problemas donde conviene destruir conexión
+        error.__shouldDestroyConnection =
+            error.code === "PROTOCOL_CONNECTION_LOST" ||
+            error.code === "ECONNRESET" ||
+            error.code === "ETIMEDOUT" ||
+            String(error.message || "").toLowerCase().includes("timeout");
+
         throw error;
     }
 }
+
 
 async function getCompanyById(companyId) {
     try {
