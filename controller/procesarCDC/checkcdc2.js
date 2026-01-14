@@ -117,7 +117,7 @@ async function EnviarcdAsignacion(didOwner) {
        AND v.superado = 0
       WHERE a.cdc = 0
         AND a.didOwner = ?
-        AND a.autofecha >= '2025-10-10 00:00:00'
+      
       LIMIT 500
     `;
 
