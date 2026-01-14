@@ -92,7 +92,7 @@ function iniciarSchedulerUnico() {
 
         try {
             console.log("🔁 Envios: iniciando sincronización...");
-            await withTimeout(sincronizarEnviosUnaVez(), 10 * 60 * 1000, "sincronizarEnviosUnaVez"); // max 10 min
+            await withTimeout(sincronizarEnviosUnaVez(), 55 * 1000, "sincronizarEnviosUnaVez"); // max 55 segundos
             console.log("✅ Envios: sincronización completada");
 
             console.log("🔁 CDC/pendientes: iniciando...");
@@ -103,7 +103,7 @@ function iniciarSchedulerUnico() {
         } finally {
             running = false;
         }
-    }, 1 * 60 * 1000); // cada 1 min
+    }, 55 * 1000); // cada 1 min
 }
 
 (async () => {
