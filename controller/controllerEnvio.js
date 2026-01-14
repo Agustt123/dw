@@ -3,11 +3,23 @@ const { getConnection, getConnectionLocal, executeQuery, redisClient } = require
 async function sincronizarEnviosUnaVez() {
     let connDW = null;
 
+    // ✅ métricas de la corrida
+    const metrics = {
+        startedAt: Date.now(),
+        elapsedMs: 0,
+        empresas: 0,
+        envios: 0,
+        asignaciones: 0,
+        estados: 0,
+        eliminaciones: 0,
+        porEmpresa: {}, // { [didOwner]: { envios, asignaciones, estados, eliminaciones } }
+    };
+
     try {
         const empresaDataStr = await redisClient.get("empresasData");
         if (!empresaDataStr) {
             console.error("❌ No se encontró 'empresasData' en Redis.");
-            return;
+            return metrics; // ✅ siempre devolver algo
         }
 
         const empresaData = JSON.parse(empresaDataStr);
@@ -15,13 +27,13 @@ async function sincronizarEnviosUnaVez() {
 
         if (!didOwners.length) {
             console.log("⚠️ No hay empresas para sincronizar envíos.");
-            return;
+            return metrics;
         }
 
         // ✅ UNA sola conexión DW por corrida
         connDW = await getConnectionLocal();
 
-        // ✅ Cachear columnas UNA sola vez por corrida (ahorra miles de queries)
+        // ✅ Cachear columnas UNA sola vez por corrida
         const columnasEnviosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM envios")).map(c => c.Field);
         const columnasAsignacionesDW = (await executeQuery(connDW, "SHOW COLUMNS FROM asignaciones")).map(c => c.Field);
         const columnasEstadosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM estado")).map(c => c.Field);
@@ -45,23 +57,33 @@ async function sincronizarEnviosUnaVez() {
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
 
+            metrics.empresas += 1;
+            metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+
             try {
                 await sincronizarEnviosBatchParaEmpresa(
                     didOwner,
                     connDW,
                     columnasEnviosDW,
                     columnasAsignacionesDW,
-                    columnasEstadosDW
+                    columnasEstadosDW,
+                    metrics
                 );
             } catch (e) {
-                console.error(`❌ Error sincronizando empresa ${didOwner}:`, e);
+                console.error(`❌ Error sincronizando empresa ${didOwner}:`, e?.message || e);
             }
         }
     } catch (e) {
-        console.error("❌ Error general en sincronizarEnviosUnaVez:", e);
+        console.error("❌ Error general en sincronizarEnviosUnaVez:", e?.message || e);
     } finally {
-        if (connDW?.release) connDW.release();
+        try {
+            if (connDW?.release) connDW.release();
+        } catch (_) { /* ignore */ }
+
+        metrics.elapsedMs = Date.now() - metrics.startedAt;
     }
+
+    return metrics;
 }
 
 async function sincronizarEnviosBatchParaEmpresa(
@@ -69,7 +91,8 @@ async function sincronizarEnviosBatchParaEmpresa(
     connDW,
     columnasEnviosDW,
     columnasAsignacionesDW,
-    columnasEstadosDW
+    columnasEstadosDW,
+    metrics
 ) {
     console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
@@ -79,19 +102,18 @@ async function sincronizarEnviosBatchParaEmpresa(
     try {
         connEmpresa = await getConnection(didOwner);
 
-        await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW);
-        await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW);
-        await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW);
-        await procesarEliminaciones(connEmpresa, connDW, didOwner);
+        await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics);
+        await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics);
+        await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics);
+        await procesarEliminaciones(connEmpresa, connDW, didOwner, metrics);
 
         console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
     } catch (error) {
-        // ✅ si el error sugiere conexión “envenenada”, la marcamos para destruir
         const msg = String(error?.message || error).toLowerCase();
         const code = error?.code;
 
         if (
-            error?.__shouldDestroyConnection ||            // si lo marcás desde executeQuery
+            error?.__shouldDestroyConnection ||
             code === "PROTOCOL_CONNECTION_LOST" ||
             code === "ECONNRESET" ||
             code === "ETIMEDOUT" ||
@@ -106,27 +128,36 @@ async function sincronizarEnviosBatchParaEmpresa(
 
         if (connEmpresaBad && typeof connEmpresa.destroy === "function") {
             console.log(`[${didOwner}] 🔥 Destruyendo conexión empresa (timeout/red)`);
-            connEmpresa.destroy(); // ✅ NO vuelve al pool
+            connEmpresa.destroy();
         } else if (typeof connEmpresa.release === "function") {
             console.log(`[${didOwner}] Liberando conexión empresa`);
-            connEmpresa.release(); // ✅ vuelve al pool OK
+            connEmpresa.release();
         } else if (typeof connEmpresa.end === "function") {
             await connEmpresa.end();
         }
     }
 }
 
-// -------------------- Procesadores (tu código tal cual) --------------------
+// -------------------- Procesadores --------------------
 
-async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
+async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics) {
     const lastEnvios = await executeQuery(connDW, "SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    let lastIdEnvios = lastEnvios.length ? lastEnvios[0].idMaxEnvios : 0;
+    const lastIdEnvios = lastEnvios.length ? lastEnvios[0].idMaxEnvios : 0;
 
     const enviosRows = await executeQuery(
         connEmpresa,
         "SELECT * FROM envios WHERE id > ? ORDER BY id ASC LIMIT 100",
         [lastIdEnvios]
     );
+
+    // ✅ métricas
+    metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+    metrics.porEmpresa[didOwner].envios += enviosRows.length;
+    metrics.envios += enviosRows.length;
+
+    if (enviosRows.length === 100) {
+        console.log(`[${didOwner}] ⚠️ envios: LIMIT 100 alcanzado (posible backlog)`);
+    }
 
     let lastProcessedId = 0;
 
@@ -176,15 +207,24 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW) {
     }
 }
 
-async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW) {
+async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics) {
     const lastAsignaciones = await executeQuery(connDW, "SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    let lastIdAsignaciones = lastAsignaciones.length ? lastAsignaciones[0].idMaxAsignaciones : 0;
+    const lastIdAsignaciones = lastAsignaciones.length ? lastAsignaciones[0].idMaxAsignaciones : 0;
 
     const asignacionesRows = await executeQuery(
         connEmpresa,
         "SELECT * FROM envios_asignaciones WHERE id > ? ORDER BY id ASC LIMIT 100",
         [lastIdAsignaciones]
     );
+
+    // ✅ métricas
+    metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+    metrics.porEmpresa[didOwner].asignaciones += asignacionesRows.length;
+    metrics.asignaciones += asignacionesRows.length;
+
+    if (asignacionesRows.length === 100) {
+        console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 100 alcanzado (posible backlog)`);
+    }
 
     let lastProcessedId = 0;
 
@@ -225,15 +265,24 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
     }
 }
 
-async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW) {
+async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics) {
     const lastEstados = await executeQuery(connDW, "SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    let lastIdEstados = lastEstados.length ? lastEstados[0].idMaxEstados : 0;
+    const lastIdEstados = lastEstados.length ? lastEstados[0].idMaxEstados : 0;
 
     const historialRows = await executeQuery(
         connEmpresa,
         "SELECT * FROM envios_historial WHERE id > ? ORDER BY id ASC LIMIT 100",
         [lastIdEstados]
     );
+
+    // ✅ métricas
+    metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+    metrics.porEmpresa[didOwner].estados += historialRows.length;
+    metrics.estados += historialRows.length;
+
+    if (historialRows.length === 100) {
+        console.log(`[${didOwner}] ⚠️ estados: LIMIT 100 alcanzado (posible backlog)`);
+    }
 
     let lastProcessedId = 0;
 
@@ -274,10 +323,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW)
     }
 }
 
-async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
+async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     const limitParaEliminar = 100;
     const last = await executeQuery(connDW, "SELECT idMaxSisIngActiElim FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    let lastId = last.length ? last[0].idMaxSisIngActiElim : 0;
+    const lastId = last.length ? last[0].idMaxSisIngActiElim : 0;
 
     const sistemaIngresosRows = await executeQuery(
         connEmpresa,
@@ -285,6 +334,15 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner) {
      WHERE id > ? AND modulo = 'eliminra_envio' ORDER BY id ASC LIMIT ?`,
         [lastId, limitParaEliminar]
     );
+
+    // ✅ métricas
+    metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+    metrics.porEmpresa[didOwner].eliminaciones += sistemaIngresosRows.length;
+    metrics.eliminaciones += sistemaIngresosRows.length;
+
+    if (sistemaIngresosRows.length === 100) {
+        console.log(`[${didOwner}] ⚠️ eliminaciones: LIMIT alcanzado (posible backlog)`);
+    }
 
     let maxIdEliminacion = 0;
 

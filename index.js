@@ -92,9 +92,27 @@ function iniciarSchedulerUnico() {
 
         try {
             console.log("🔁 Envios: iniciando sincronización...");
-            await withTimeout(sincronizarEnviosUnaVez(), 55 * 1000, "sincronizarEnviosUnaVez"); // max 55 segundos
-            console.log("✅ Envios: sincronización completada");
 
+            const stats = await withTimeout(
+                sincronizarEnviosUnaVez(),
+                55 * 1000,
+                "sincronizarEnviosUnaVez"
+            );
+
+            const mins = (stats.elapsedMs || 1) / 60000;
+            const enviosMin = (stats.envios / mins).toFixed(1);
+
+            console.log(
+                `✅ Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, ` +
+                `empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envíos/min`
+            );
+
+            // (opcional) detalle por empresa
+            for (const [owner, m] of Object.entries(stats.porEmpresa || {})) {
+                if (m.envios || m.asignaciones || m.estados || m.eliminaciones) {
+                    console.log(`   - ${owner}: envios=${m.envios}, asig=${m.asignaciones}, estados=${m.estados}, elim=${m.eliminaciones}`);
+                }
+            }
             console.log("🔁 CDC/pendientes: iniciando...");
             await correrCdcYPendientesUnaVez();
             console.log("✅ CDC/pendientes: completado");
