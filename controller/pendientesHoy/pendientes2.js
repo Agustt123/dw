@@ -287,7 +287,7 @@ async function aplicarAprocesosAHommeApp(conn) {
     const CHUNK = 1000;
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
       const slice = idsProcesados.length > CHUNK ? idsProcesados.slice(i, i + CHUNK) : idsProcesados;
-      const updCdc = `UPDATE cdc SET procesado=1 and fProcesado=NOW() WHERE id IN (${slice.map(() => '?').join(',')})`;
+      const updCdc = `UPDATE cdc SET procesado=1 and fProcesado= NOW() WHERE id IN (${slice.map(() => '?').join(',')})`;
       await executeQuery(conn, updCdc, slice);
       //     console.log("✅ CDC marcado como procesado para", slice.length, "rows");
       if (idsProcesados.length <= CHUNK) break;
