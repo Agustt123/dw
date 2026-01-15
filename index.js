@@ -64,8 +64,8 @@ async function correrCdcYPendientesUnaVez() {
     for (const didOwner of didOwners) {
         try {
             // ✅ timeout por empresa para que no se cuelgue
-            await withTimeout(EnviarcdAsignacion(didOwner), 20000, `CDC asignacion ${didOwner}`);
-            await withTimeout(EnviarcdcEstado(didOwner), 20000, `CDC estado ${didOwner}`);
+            await withTimeout(EnviarcdAsignacion(didOwner), 200000, `CDC asignacion ${didOwner}`);
+            await withTimeout(EnviarcdcEstado(didOwner), 200000, `CDC estado ${didOwner}`);
             // console.log(`✅ CDC OK empresa ${didOwner}`);
         } catch (e) {
             console.error(`❌ Error CDC empresa ${didOwner}:`, e.message || e);
