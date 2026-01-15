@@ -298,18 +298,19 @@ async function aplicarAprocesosAHommeApp(conn) {
 // ----------------- Batch principal -----------------
 async function pendientesHoy() {
   const conn = await getConnectionLocal();
+
   try {
     const FETCH = 5000;
 
     const selectCDC = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
+    SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
-        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
+      AND ( ejecutar="estado" OR ejecutar="asignaciones" )
         AND didCliente IS NOT NULL
       ORDER BY id ASC
       LIMIT ?
-    `;
+      `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
@@ -318,6 +319,7 @@ async function pendientesHoy() {
     await buildAprocesosEstado(rowsEstado, conn);
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
     await aplicarAprocesosAHommeApp(conn);
+    console.log("hola");
   } catch (err) {
     console.error("❌ Error batch:", err);
   }

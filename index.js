@@ -73,7 +73,7 @@ async function correrCdcYPendientesUnaVez() {
     }
 
     try {
-        await withTimeout(pendientesHoy(), 30000, "pendientesHoy");
+        await withTimeout(pendientesHoy(), 300000, "pendientesHoy");
         // console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e.message || e);
