@@ -3,25 +3,31 @@ const { executeQuery, getConnectionLocal } = require("../../db");
 // ----------------- Config -----------------
 const Aprocesos = {};
 const idsProcesados = [];
-const LIMIT = 50;
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
 
-const TZ = 'America/Argentina/Buenos_Aires';
+const TZ = "America/Argentina/Buenos_Aires";
 
 function getDiaFromTS(ts) {
   const d = new Date(ts);
   const ok = isNaN(d.getTime()) ? new Date() : d;
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit"
   }).format(ok);
 }
 
-const nEstado = v => {
+const nEstado = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
+
+// ✅ limpiar estado global por corrida
+function resetState() {
+  // vaciar Aprocesos sin perder referencia
+  for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
+  idsProcesados.length = 0;
+}
 
 // ----------------- Helpers -----------------
 function ensure(o, k) { return (o[k] ??= {}); }
@@ -46,11 +52,8 @@ async function buildAprocesosEstado(rows, connection) {
 
     const dia = getDiaFromTS(row.fecha);
     const envio = String(row.didPaquete);
-    const CHO = EST === 0
-      ? (Number(row.quien) || 0)
-      : (row.didChofer ?? 0);
+    const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
 
-    // 🔹 Buscar combinaciones vivas del envío en home_app y darlas de baja
     const qPrev = `
       SELECT estado, didChofer
       FROM home_app
@@ -62,17 +65,14 @@ async function buildAprocesosEstado(rows, connection) {
       const PREV_EST = nEstado(prev.estado);
       const PREV_CHO = Number(prev.didChofer) || 0;
 
-      // bajas global/cliente
       pushNodo(OW, 0, 0, PREV_EST, dia, 0, envio);
       pushNodo(OW, CLI, 0, PREV_EST, dia, 0, envio);
 
-      // bajas por chofer
       if (PREV_CHO !== 0) {
         pushNodo(OW, 0, PREV_CHO, PREV_EST, dia, 0, envio);
         pushNodo(OW, CLI, PREV_CHO, PREV_EST, dia, 0, envio);
       }
 
-      // bajas de 69/70 si aplicaban
       if (ESTADOS_69.has(PREV_EST)) {
         pushNodo(OW, 0, 0, 69, dia, 0, envio);
         pushNodo(OW, CLI, 0, 69, dia, 0, envio);
@@ -91,11 +91,9 @@ async function buildAprocesosEstado(rows, connection) {
       }
     }
 
-    // 🔹 Altas del nuevo estado (global y por cliente)
     pushNodo(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
-    // 🔹 Combinados global/cliente coherentes
     if (ESTADOS_69.has(EST)) {
       pushNodo(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
@@ -112,7 +110,6 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // 🔹 Si hay chofer, altas por chofer
     if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
@@ -195,9 +192,17 @@ async function buildAprocesosAsignaciones(conn, rows) {
   return Aprocesos;
 }
 
-// ----------------- Aplicar batch -----------------
+// ----------------- Aplicar batch (chunked commits) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
-  await executeQuery(conn, "START TRANSACTION");
+  const COMMIT_EVERY = 300; // ✅ ajustable: 100/300/500
+  let ops = 0;
+
+  const begin = async () => executeQuery(conn, "START TRANSACTION");
+  const commit = async () => executeQuery(conn, "COMMIT");
+  const rollback = async () => executeQuery(conn, "ROLLBACK");
+
+  await begin();
+
   try {
     for (const owner in Aprocesos) {
       const porCliente = Aprocesos[owner];
@@ -227,33 +232,25 @@ async function aplicarAprocesosAHommeApp(conn) {
               if (actual.length > 0) {
                 const sHist = actual[0].didsPaquete || "";
                 if (sHist.trim()) {
-                  for (const x of sHist.split(",").map(t => t.trim()).filter(Boolean)) {
-                    historialSet.add(x);
-                  }
+                  for (const x of sHist.split(",").map(t => t.trim()).filter(Boolean)) historialSet.add(x);
                 }
-
                 const sCierre = actual[0].didsPaquetes_cierre || "";
                 if (sCierre.trim()) {
-                  for (const x of sCierre.split(",").map(t => t.trim()).filter(Boolean)) {
-                    cierreSet.add(x);
-                  }
+                  for (const x of sCierre.split(",").map(t => t.trim()).filter(Boolean)) cierreSet.add(x);
                 }
               }
 
               for (const p of pos) {
                 const k = String(p);
-                historialSet.add(k);   // ✅ no repite
+                historialSet.add(k);
                 cierreSet.add(k);
               }
-
               for (const p of neg) {
-                const k = String(p);
-                cierreSet.delete(k);   // (historial no se borra)
+                cierreSet.delete(String(p));
               }
 
               const didsPaqueteStr = Array.from(historialSet).join(",");
               const didsPaquetesCierreStr = Array.from(cierreSet).join(",");
-
 
               const upsert = `
                 INSERT INTO home_app
@@ -271,46 +268,55 @@ async function aplicarAprocesosAHommeApp(conn) {
                 didsPaquetesCierreStr,
                 dia
               ]);
+
+              ops += 1;
+
+              // ✅ cortar transacción grande
+              if (ops % COMMIT_EVERY === 0) {
+                await commit();
+                await begin();
+              }
             }
           }
         }
       }
     }
 
-    await executeQuery(conn, "COMMIT");
+    await commit();
   } catch (e) {
-    await executeQuery(conn, "ROLLBACK");
+    try { await rollback(); } catch (_) { }
     throw e;
   }
 
   if (idsProcesados.length > 0) {
     const CHUNK = 1000;
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
-      const slice = idsProcesados.length > CHUNK ? idsProcesados.slice(i, i + CHUNK) : idsProcesados;
-      const updCdc = `UPDATE cdc SET procesado=1 and fProcesado= NOW() WHERE id IN (${slice.map(() => '?').join(',')})`;
-      await executeQuery(conn, updCdc, slice, true);
-      //     console.log("✅ CDC marcado como procesado para", slice.length, "rows");
-      if (idsProcesados.length <= CHUNK) break;
+      const slice = idsProcesados.slice(i, i + CHUNK);
+      const updCdc = `UPDATE cdc SET procesado=1, fProcesado=NOW() WHERE id IN (${slice.map(() => "?").join(",")})`;
+      await executeQuery(conn, updCdc, slice);
     }
   }
 }
 
 // ----------------- Batch principal -----------------
 async function pendientesHoy() {
+  resetState(); // ✅ importantísimo
+
   const conn = await getConnectionLocal();
+  let fatalErr = null;
 
   try {
-    const FETCH = 5000;
+    const FETCH = 1000; // ✅ bajar de 5000 para no explotar transacción/locks
 
     const selectCDC = `
-    SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
       FROM cdc
       WHERE procesado=0
-      AND ( ejecutar="estado" OR ejecutar="asignaciones" )
+        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
         AND didCliente IS NOT NULL
       ORDER BY id ASC
       LIMIT ?
-      `;
+    `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
@@ -319,16 +325,33 @@ async function pendientesHoy() {
     await buildAprocesosEstado(rowsEstado, conn);
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
     await aplicarAprocesosAHommeApp(conn);
-    console.log("hola");
+
+    return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
   } catch (err) {
+    fatalErr = err;
     console.error("❌ Error batch:", err);
-  }
-  finally {
-    //   console.log("✅ Proceso de pendientesHoy finalizado");
-    await conn.release();
+    throw err; // ✅ para que el scheduler no “mienta”
+  } finally {
+    try {
+      const code = fatalErr?.code;
+      const msg = String(fatalErr?.message || "").toLowerCase();
+
+      const shouldDestroy =
+        fatalErr?.__shouldDestroyConnection ||
+        code === "PROTOCOL_SEQUENCE_TIMEOUT" ||
+        msg.includes("query inactivity timeout");
+
+      if (shouldDestroy && typeof conn.destroy === "function") {
+        console.log("🔥 Destruyendo conexión DW (timeout/protocol)");
+        conn.destroy();
+      } else if (conn?.release) {
+        conn.release();
+      }
+    } catch (_) { /* ignore */ }
   }
 }
 
-pendientesHoy();
+// ❌ NO ejecutar automáticamente al importar
+// pendientesHoy();
 
 module.exports = { pendientesHoy };
