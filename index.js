@@ -80,49 +80,48 @@ async function correrCdcYPendientesUnaVez() {
     }
 }
 
-let running = false;
+let runningPromise = null;
 
 function iniciarSchedulerUnico() {
     setInterval(async () => {
-        if (running) {
-            console.log("⏭️ Scheduler: ciclo saltado (todavía en ejecución)");
-            return;
-        }
-        running = true;
-
-        try {
+        // Si hay envíos corriendo, NO arrancás otro envíos
+        if (!runningPromise) {
             console.log("🔁 Envios: iniciando sincronización...");
+            runningPromise = sincronizarEnviosUnaVez();
 
-            const stats = await withTimeout(
-                sincronizarEnviosUnaVez(),
-                55 * 1000,
-                "sincronizarEnviosUnaVez"
-            );
-
-            const mins = (stats.elapsedMs || 1) / 60000;
-            const enviosMin = (stats.envios / mins).toFixed(1);
-
-            console.log(
-                `✅ Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, ` +
-                `empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envíos/min`
-            );
-
-            // (opcional) detalle por empresa
-            for (const [owner, m] of Object.entries(stats.porEmpresa || {})) {
-                if (m.envios || m.asignaciones || m.estados || m.eliminaciones) {
-                    console.log(`   - ${owner}: envios=${m.envios}, asig=${m.asignaciones}, estados=${m.estados}, elim=${m.eliminaciones}`);
-                }
-            }
-            //   console.log("🔁 CDC/pendientes: iniciando...");
-            await correrCdcYPendientesUnaVez();
-            // console.log("✅ CDC/pendientes: completado");
-        } catch (e) {
-            console.error("❌ Error en ciclo scheduler:", e.message || e);
-        } finally {
-            running = false;
+            // log con timeout, pero no corta el proceso real
+            withTimeout(runningPromise, 55 * 1000, "sincronizarEnviosUnaVez")
+                .then((stats) => {
+                    const mins = (stats.elapsedMs || 1) / 60000;
+                    const enviosMin = (stats.envios / mins).toFixed(1);
+                    console.log(
+                        `✅ Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, ` +
+                        `empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envíos/min`
+                    );
+                })
+                .catch((e) => {
+                    console.error("⏱️ Envios se pasó de 55s (sigue corriendo):", e.message || e);
+                })
+                .finally(async () => {
+                    try { await runningPromise; } catch { }
+                    runningPromise = null;
+                });
+        } else {
+            console.log("⏭️ Envios sigue corriendo, no arranco otro");
         }
-    }, 120 * 1000); // 55 segundos
+
+        // ✅ CDC SIEMPRE corre en cada tick (aunque envíos siga)
+        try {
+            console.log("🔁 CDC/pendientes: iniciando...");
+            await correrCdcYPendientesUnaVez();
+            console.log("✅ CDC/pendientes: completado");
+        } catch (e) {
+            console.error("❌ Error en CDC/pendientes:", e.message || e);
+        }
+
+    }, 120 * 1000);
 }
+
 
 (async () => {
     try {
