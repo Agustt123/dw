@@ -299,7 +299,7 @@ async function aplicarAprocesosAHommeApp(conn) {
 async function pendientesHoy() {
   const conn = await getConnectionLocal();
   try {
-    const FETCH = 1000;
+    const FETCH = 5000;
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
