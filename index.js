@@ -121,7 +121,7 @@ function iniciarSchedulerUnico() {
         } finally {
             running = false;
         }
-    }, 55 * 1000); // 55 segundos
+    }, 120 * 1000); // 55 segundos
 }
 
 (async () => {
