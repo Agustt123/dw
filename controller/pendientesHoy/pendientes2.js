@@ -31,6 +31,14 @@ function resetState() {
 
 // ----------------- Helpers -----------------
 function ensure(o, k) { return (o[k] ??= {}); }
+function pushNodoConGlobal(owner, cli, cho, est, dia, tipo, envio) {
+  // owner real
+  pushNodo(owner, cli, cho, est, dia, tipo, envio);
+
+  // global absoluto: todas las empresas
+  pushNodo(0, 0, 0, est, dia, tipo, envio);
+}
+
 function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   ensure(Aprocesos, owner);
   ensure(Aprocesos[owner], cli);
@@ -65,7 +73,8 @@ async function buildAprocesosEstado(rows, connection) {
       const PREV_EST = nEstado(prev.estado);
       const PREV_CHO = Number(prev.didChofer) || 0;
 
-      pushNodo(OW, 0, 0, PREV_EST, dia, 0, envio);
+      // negativos previos
+      pushNodoConGlobal(OW, 0, 0, PREV_EST, dia, 0, envio);
       pushNodo(OW, CLI, 0, PREV_EST, dia, 0, envio);
 
       if (PREV_CHO !== 0) {
@@ -74,16 +83,19 @@ async function buildAprocesosEstado(rows, connection) {
       }
 
       if (ESTADOS_69.has(PREV_EST)) {
-        pushNodo(OW, 0, 0, 69, dia, 0, envio);
+        pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
         pushNodo(OW, CLI, 0, 69, dia, 0, envio);
+
         if (PREV_CHO !== 0) {
           pushNodo(OW, 0, PREV_CHO, 69, dia, 0, envio);
           pushNodo(OW, CLI, PREV_CHO, 69, dia, 0, envio);
         }
       }
+
       if (ESTADOS_70.has(PREV_EST)) {
-        pushNodo(OW, 0, 0, 70, dia, 0, envio);
+        pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
         pushNodo(OW, CLI, 0, 70, dia, 0, envio);
+
         if (PREV_CHO !== 0) {
           pushNodo(OW, 0, PREV_CHO, 70, dia, 0, envio);
           pushNodo(OW, CLI, PREV_CHO, 70, dia, 0, envio);
@@ -91,25 +103,30 @@ async function buildAprocesosEstado(rows, connection) {
       }
     }
 
-    pushNodo(OW, 0, 0, EST, dia, 1, envio);
+    // positivos actuales
+    pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
+    // 69
     if (ESTADOS_69.has(EST)) {
-      pushNodo(OW, 0, 0, 69, dia, 1, envio);
+      pushNodoConGlobal(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
     } else {
-      pushNodo(OW, 0, 0, 69, dia, 0, envio);
+      pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
       pushNodo(OW, CLI, 0, 69, dia, 0, envio);
     }
 
+    // 70
     if (ESTADOS_70.has(EST)) {
-      pushNodo(OW, 0, 0, 70, dia, 1, envio);
+      pushNodoConGlobal(OW, 0, 0, 70, dia, 1, envio);
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
     } else {
-      pushNodo(OW, 0, 0, 70, dia, 0, envio);
+      pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
+    // combinaciones por chofer (las dejamos igual, NO las agregamos al global,
+    // porque vos pediste global solo en owner=0/cliente=0/chofer=0)
     if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
@@ -136,6 +153,7 @@ async function buildAprocesosEstado(rows, connection) {
   return Aprocesos;
 }
 
+
 // ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
   for (const row of rows) {
@@ -149,16 +167,27 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const dia = getDiaFromTS(row.fecha);
 
     if (CHO !== 0) {
+      // positivos
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
+
+      // ✅ global absoluto
+      pushNodo(0, 0, 0, EST, dia, 1, envio);
 
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
+
+        // ✅ global absoluto
+        pushNodo(0, 0, 0, 69, dia, 1, envio);
       }
+
       if (ESTADOS_70.has(EST)) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
+
+        // ✅ global absoluto
+        pushNodo(0, 0, 0, 70, dia, 1, envio);
       }
     }
 
@@ -170,19 +199,31 @@ async function buildAprocesosAsignaciones(conn, rows) {
       LIMIT 1
     `;
     const prev = await executeQuery(conn, qChoferAnterior, [envio, OW]);
+
     if (prev.length) {
       const choPrev = prev[0].didChofer || 0;
       if (choPrev !== 0) {
+        // negativos
         pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
         pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
+
+        // ✅ global absoluto
+        pushNodo(0, 0, 0, EST, dia, 0, envio);
 
         if (ESTADOS_69.has(EST)) {
           pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
+
+          // ✅ global absoluto
+          pushNodo(0, 0, 0, 69, dia, 0, envio);
         }
+
         if (ESTADOS_70.has(EST)) {
           pushNodo(OW, CLI, choPrev, 70, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 70, dia, 0, envio);
+
+          // ✅ global absoluto
+          pushNodo(0, 0, 0, 70, dia, 0, envio);
         }
       }
     }
