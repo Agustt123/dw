@@ -35,7 +35,7 @@ async function EnviarcdcEstado(didOwner) {
        AND v.elim = 0
        AND v.superado = 0
       WHERE e.cdc = 0 AND e.didOwner = ?
-      LIMIT 50
+      LIMIT 500
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
