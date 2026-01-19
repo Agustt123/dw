@@ -340,7 +340,17 @@ async function aplicarAprocesosAHommeApp(conn) {
 }
 
 // ----------------- Batch principal -----------------
+let PENDIENTES_HOY_RUNNING = false;
+
 async function pendientesHoy() {
+  // ✅ Opción A: no permitir solape
+  if (PENDIENTES_HOY_RUNNING) {
+    console.log("⏭️ pendientesHoy ya está corriendo, salteo esta ejecución");
+    return { ok: true, skipped: true };
+  }
+
+  PENDIENTES_HOY_RUNNING = true;
+
   resetState(); // ✅ importantísimo
 
   const conn = await getConnectionLocal();
@@ -373,6 +383,9 @@ async function pendientesHoy() {
     console.error("❌ Error batch:", err);
     throw err; // ✅ para que el scheduler no “mienta”
   } finally {
+    // ✅ SIEMPRE liberar el candado aunque explote
+    PENDIENTES_HOY_RUNNING = false;
+
     try {
       const code = fatalErr?.code;
       const msg = String(fatalErr?.message || "").toLowerCase();
@@ -391,6 +404,7 @@ async function pendientesHoy() {
     } catch (_) { /* ignore */ }
   }
 }
+
 
 // ❌ NO ejecutar automáticamente al importar
 // pendientesHoy();
