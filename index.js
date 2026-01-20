@@ -63,10 +63,8 @@ async function correrCdcYPendientesUnaVez() {
 
     for (const didOwner of didOwners) {
         try {
-            // ✅ timeout por empresa para que no se cuelgue
             await withTimeout(EnviarcdAsignacion(didOwner), 200000, `CDC asignacion ${didOwner}`);
             await withTimeout(EnviarcdcEstado(didOwner), 200000, `CDC estado ${didOwner}`);
-            // console.log(`✅ CDC OK empresa ${didOwner}`);
         } catch (e) {
             console.error(`❌ Error CDC empresa ${didOwner}:`, e.message || e);
         }
@@ -74,7 +72,6 @@ async function correrCdcYPendientesUnaVez() {
 
     try {
         await withTimeout(pendientesHoy(), 300000, "pendientesHoy");
-        // console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e.message || e);
     }
@@ -82,14 +79,55 @@ async function correrCdcYPendientesUnaVez() {
 
 let runningPromise = null;
 
+// ✅ NUEVO: lock + pending para CDC/pendientes
+let runningCdc = false;
+let cdcPending = false;
+
+async function runCdcSafely() {
+    // Si ya está corriendo, marcamos pendiente y salimos
+    if (runningCdc) {
+        cdcPending = true;
+        return;
+    }
+
+    // Si envíos está corriendo, marcamos pendiente y salimos
+    if (runningPromise) {
+        cdcPending = true;
+        return;
+    }
+
+    runningCdc = true;
+    try {
+        do {
+            cdcPending = false;
+
+            console.log("🔁 CDC/pendientes: iniciando...");
+            await correrCdcYPendientesUnaVez();
+            console.log("✅ CDC/pendientes: completado");
+
+            // Si durante la ejecución alguien lo marcó pendiente, lo repetimos
+            // (pero ojo: si Envios arrancó mientras tanto, cortamos y queda pendiente)
+            if (runningPromise) {
+                cdcPending = true;
+                break;
+            }
+        } while (cdcPending);
+    } catch (e) {
+        console.error("❌ Error en CDC/pendientes:", e.message || e);
+    } finally {
+        runningCdc = false;
+    }
+}
+
 function iniciarSchedulerUnico() {
     setInterval(async () => {
-        // Si hay envíos corriendo, NO arrancás otro envíos
+        // =========================
+        // ENVÍOS (lock existente)
+        // =========================
         if (!runningPromise) {
             console.log("🔁 Envios: iniciando sincronización...");
             runningPromise = sincronizarEnviosUnaVez();
 
-            // log con timeout, pero no corta el proceso real
             withTimeout(runningPromise, 55 * 1000, "sincronizarEnviosUnaVez")
                 .then((stats) => {
                     const mins = (stats.elapsedMs || 1) / 60000;
@@ -104,31 +142,24 @@ function iniciarSchedulerUnico() {
                 })
                 .finally(async () => {
                     try { await runningPromise; } catch { }
+
                     runningPromise = null;
+
+                    // ✅ si CDC quedó pendiente mientras Envios corría, lo arrancamos ahora
+                    if (cdcPending) {
+                        runCdcSafely().catch(() => { });
+                    }
                 });
         } else {
             console.log("⏭️ Envios sigue corriendo, no arranco otro");
         }
 
-        // ✅ CDC SIEMPRE corre en cada tick (aunque envíos siga)
-        try {
-            console.log("🔁 CDC/pendientes: iniciando...");
-            if (!runningPromise) {
-                console.log("🔁 CDC/pendientes: iniciando...");
-                await correrCdcYPendientesUnaVez();
-                console.log("✅ CDC/pendientes: completado");
-            } else {
-                console.log("⏭️ CDC/pendientes salteado: Envios sigue corriendo");
-            }
-            ;
-            console.log("✅ CDC/pendientes: completado");
-        } catch (e) {
-            console.error("❌ Error en CDC/pendientes:", e.message || e);
-        }
-
+        // =========================
+        // CDC/PENDIENTES (siempre intentamos; si no se puede, queda pending)
+        // =========================
+        runCdcSafely().catch(() => { });
     }, 120 * 1000);
 }
-
 
 (async () => {
     try {
