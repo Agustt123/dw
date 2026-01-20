@@ -308,7 +308,7 @@ async function aplicarAprocesosAHommeApp(conn) {
                 didsPaqueteStr,
                 didsPaquetesCierreStr,
                 dia
-              ]);
+              ], true);
 
               ops += 1;
 
@@ -357,7 +357,7 @@ async function pendientesHoy() {
   let fatalErr = null;
 
   try {
-    const FETCH = 1000; // ✅ bajar de 5000 para no explotar transacción/locks
+    const FETCH = 200; // ✅ bajar de 5000 para no explotar transacción/locks
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
@@ -372,10 +372,18 @@ async function pendientesHoy() {
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
+    console.log("llegamos 1 ");
 
     await buildAprocesosEstado(rowsEstado, conn);
+    console.log("llegamos 2 ");
+
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
+    console.log("llegamos 3 ");
+
     await aplicarAprocesosAHommeApp(conn);
+    console.log("llegamos 4 ");
+
+
 
     return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
   } catch (err) {
@@ -407,6 +415,6 @@ async function pendientesHoy() {
 
 
 // ❌ NO ejecutar automáticamente al importar
-// pendientesHoy();
+pendientesHoy();
 
 module.exports = { pendientesHoy };

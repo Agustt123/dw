@@ -79,7 +79,7 @@ async function EnviarcdcEstado(didOwner) {
                 ]);
             }
 
-            const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio], true);
             if (result.affectedRows === 0) {
                 //   console.log(`ℹ️ No se pudo actualizar el estado para didEnvio ${didEnvio}`);
                 continue;
@@ -173,6 +173,9 @@ async function EnviarcdAsignacion(didOwner) {
         await closeConn(connection);
     }
 }
+
+
+EnviarcdcEstado(164);
 
 module.exports = {
     EnviarcdcEstado,
