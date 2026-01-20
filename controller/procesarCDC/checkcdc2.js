@@ -100,7 +100,7 @@ async function EnviarcdcEstado(didOwner) {
 async function EnviarcdAsignacion(didOwner) {
     let connection;
     try {
-        connection = await getConnectionLocal();
+        connection = await getConnectionLocalCdc();
 
         // ✅ Trae didCliente en el mismo SELECT (sin N+1)
         const selectQuery = `
