@@ -16,7 +16,6 @@ app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 app.use(cors({ origin: "*", methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
 
 app.use("/informe-colecta", informeColecta);
-
 app.get("/ping", (req, res) => res.status(200).json({ estado: true, mensaje: "OK" }));
 
 const PORT = 13000;
@@ -51,7 +50,10 @@ function withTimeout(promise, ms, label) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
 }
 
-async function correrCdcYPendientesUnaVez() {
+// =========================
+// CDC (solo CDC, sin pendientes)
+// =========================
+async function correrCdcUnaVez() {
     await actualizarEmpresas();
     const didOwners = obtenerDidOwners();
     if (!didOwners.length) {
@@ -69,66 +71,78 @@ async function correrCdcYPendientesUnaVez() {
             console.error(`❌ Error CDC empresa ${didOwner}:`, e.message || e);
         }
     }
-
-    try {
-        await withTimeout(pendientesHoy(), 300000, "pendientesHoy");
-    } catch (e) {
-        console.error("❌ Error en pendientesHoy:", e.message || e);
-    }
 }
 
-let runningPromise = null;
+// =========================
+// Locks
+// =========================
+let runningEnvios = null;
 
-// ✅ NUEVO: lock + pending para CDC/pendientes
 let runningCdc = false;
 let cdcPending = false;
 
-async function runCdcSafely() {
-    // Si ya está corriendo, marcamos pendiente y salimos
-    if (runningCdc) {
-        cdcPending = true;
-        return;
-    }
+let runningPend = false;
 
-    // Si envíos está corriendo, marcamos pendiente y salimos
-    if (runningPromise) {
-        cdcPending = true;
-        return;
-    }
+// =========================
+// CDC safe runner (no se pisa)
+// =========================
+async function runCdcSafely() {
+    if (runningCdc) { cdcPending = true; return; }
+
+    // Si querés que CDC corra aunque Envios esté corriendo, BORRÁ este if.
+    // (Yo lo dejo para bajar presión total. Con pools separados podrías sacarlo.)
+    if (runningEnvios) { cdcPending = true; return; }
 
     runningCdc = true;
     try {
         do {
             cdcPending = false;
+            console.log("🔁 CDC: iniciando...");
+            await correrCdcUnaVez();
+            console.log("✅ CDC: completado");
 
-            console.log("🔁 CDC/pendientes: iniciando...");
-            await correrCdcYPendientesUnaVez();
-            console.log("✅ CDC/pendientes: completado");
-
-            // Si durante la ejecución alguien lo marcó pendiente, lo repetimos
-            // (pero ojo: si Envios arrancó mientras tanto, cortamos y queda pendiente)
-            if (runningPromise) {
-                cdcPending = true;
-                break;
-            }
+            if (runningEnvios) { cdcPending = true; break; }
         } while (cdcPending);
     } catch (e) {
-        console.error("❌ Error en CDC/pendientes:", e.message || e);
+        console.error("❌ Error en CDC:", e.message || e);
     } finally {
         runningCdc = false;
     }
 }
 
-function iniciarSchedulerUnico() {
-    setInterval(async () => {
-        // =========================
-        // ENVÍOS (lock existente)
-        // =========================
-        if (!runningPromise) {
-            console.log("🔁 Envios: iniciando sincronización...");
-            runningPromise = sincronizarEnviosUnaVez();
+// =========================
+// Pendientes fijo cada 30s (no se pisa)
+// =========================
+async function runPendientesFixed() {
+    if (runningPend) {
+        console.log("⏭️ pendientesHoy sigue corriendo, salteo este tick (30s)");
+        return;
+    }
 
-            withTimeout(runningPromise, 55 * 1000, "sincronizarEnviosUnaVez")
+    runningPend = true;
+    try {
+        // Para ritmo fijo: timeout < 30s (si no, se acumulan ticks salteados)
+        await withTimeout(pendientesHoy(), 25000, "pendientesHoy");
+        // console.log("✅ pendientesHoy OK");
+    } catch (e) {
+        console.error("❌ Error en pendientesHoy:", e.message || e);
+    } finally {
+        runningPend = false;
+    }
+}
+
+// =========================
+// Schedulers
+// =========================
+function iniciarSchedulers() {
+    // ENVÍOS + CDC (cada 120s)
+    setInterval(() => {
+        // ENVÍOS
+        if (!runningEnvios) {
+            console.log("🔁 Envios: iniciando sincronización...");
+            runningEnvios = sincronizarEnviosUnaVez();
+
+            withTimeout(runningEnvios, 55 * 1000, "sincronizarEnviosUnaVez")
                 .then((stats) => {
                     const mins = (stats.elapsedMs || 1) / 60000;
                     const enviosMin = (stats.envios / mins).toFixed(1);
@@ -141,31 +155,34 @@ function iniciarSchedulerUnico() {
                     console.error("⏱️ Envios se pasó de 55s (sigue corriendo):", e.message || e);
                 })
                 .finally(async () => {
-                    try { await runningPromise; } catch { }
+                    try { await runningEnvios; } catch { }
+                    runningEnvios = null;
 
-                    runningPromise = null;
-
-                    // ✅ si CDC quedó pendiente mientras Envios corría, lo arrancamos ahora
-                    if (cdcPending) {
-                        runCdcSafely().catch(() => { });
-                    }
+                    // Si CDC quedó pendiente mientras Envios corría, arrancalo ahora
+                    if (cdcPending) runCdcSafely().catch(() => { });
                 });
         } else {
             console.log("⏭️ Envios sigue corriendo, no arranco otro");
         }
 
-        // =========================
-        // CDC/PENDIENTES (siempre intentamos; si no se puede, queda pending)
-        // =========================
+        // CDC (intenta en cada tick)
         runCdcSafely().catch(() => { });
     }, 120 * 1000);
+
+    // ✅ PENDIENTES fijo cada 30s
+    setInterval(() => {
+        runPendientesFixed().catch(() => { });
+    }, 30 * 1000);
 }
 
+// =========================
+// Bootstrap
+// =========================
 (async () => {
     try {
         await actualizarEmpresas();
 
-        iniciarSchedulerUnico();
+        iniciarSchedulers();
 
         app.listen(PORT, () => console.log(`Servidor escuchando en http://localhost:${PORT}`));
 
