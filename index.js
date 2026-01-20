@@ -113,7 +113,14 @@ function iniciarSchedulerUnico() {
         // ✅ CDC SIEMPRE corre en cada tick (aunque envíos siga)
         try {
             console.log("🔁 CDC/pendientes: iniciando...");
-            await correrCdcYPendientesUnaVez();
+            if (!runningPromise) {
+                console.log("🔁 CDC/pendientes: iniciando...");
+                await correrCdcYPendientesUnaVez();
+                console.log("✅ CDC/pendientes: completado");
+            } else {
+                console.log("⏭️ CDC/pendientes salteado: Envios sigue corriendo");
+            }
+            ;
             console.log("✅ CDC/pendientes: completado");
         } catch (e) {
             console.error("❌ Error en CDC/pendientes:", e.message || e);
