@@ -1,4 +1,4 @@
-const { getConnection, getConnectionLocal, executeQuery, redisClient } = require("../db");
+const { getConnection, executeQuery, redisClient, getConnectionLocalEnvios } = require("../db");
 
 async function sincronizarEnviosUnaVez() {
     let connDW = null;
@@ -31,7 +31,7 @@ async function sincronizarEnviosUnaVez() {
         }
 
         // ✅ UNA sola conexión DW por corrida
-        connDW = await getConnectionLocal();
+        connDW = await getConnectionLocalEnvios();
 
         // ✅ Cachear columnas UNA sola vez por corrida
         const columnasEnviosDW = (await executeQuery(connDW, "SHOW COLUMNS FROM envios")).map(c => c.Field);
