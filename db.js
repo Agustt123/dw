@@ -2,6 +2,7 @@ const mysql = require("mysql2/promise");
 const redis = require("redis");
 const { logYellow, logRed } = require("./fuctions/logsCustom");
 
+
 // --- Redis ---
 const redisClient = redis.createClient({
     socket: {
@@ -80,8 +81,7 @@ async function getConnection(idempresa) {
 }
 
 
-// --- Conexión local al DW (sin pool, se puede mantener)
-// --- DW/local con POOL ---
+// ===== DW/local con POOLS separados =====
 const dwConfigBase = {
     host: "149.56.182.49",
     port: 44349,
@@ -91,8 +91,11 @@ const dwConfigBase = {
 
 const dwDbName = "data";
 
-let dwPool = null;
 let dwInitPromise = null;
+
+let dwPoolEnvios = null;
+let dwPoolCdc = null;
+let dwPoolPend = null;
 
 async function initDWPool() {
     // crear DB UNA sola vez
@@ -103,36 +106,80 @@ async function initDWPool() {
         await c.end().catch(() => { });
     }
 
-    // pool (reutiliza conexiones)
-    dwPool = mysql.createPool({
+    const base = {
         ...dwConfigBase,
         database: dwDbName,
         waitForConnections: true,
-        connectionLimit: 5,  // 👈 ponelo bajo (5-10). Si querés "1 sola", poné 1.
-        queueLimit: 50,      // 👈 evita cola infinita
         enableKeepAlive: true,
         keepAliveInitialDelay: 0,
+    };
+
+    // ✅ Pool para ENVIOS (más capacidad)
+    dwPoolEnvios = mysql.createPool({
+        ...base,
+        connectionLimit: 8,
+        queueLimit: 200,
+    });
+
+    // ✅ Pool para CDC (capado para que no tumbe todo)
+    dwPoolCdc = mysql.createPool({
+        ...base,
+        connectionLimit: 2,
+        queueLimit: 200,
+    });
+
+    // ✅ Pool para PENDIENTES (chico)
+    dwPoolPend = mysql.createPool({
+        ...base,
+        connectionLimit: 1,
+        queueLimit: 200,
     });
 }
 
-async function getConnectionLocal() {
+async function ensurePools() {
+    if (!dwInitPromise) dwInitPromise = initDWPool();
+    await dwInitPromise;
+}
+
+async function getConnectionLocalEnvios() {
     try {
-        if (!dwInitPromise) dwInitPromise = initDWPool();
-        await dwInitPromise;
-        return await dwPool.getConnection();
+        await ensurePools();
+        return await dwPoolEnvios.getConnection();
     } catch (error) {
-        console.error("❌ Error al obtener conexión local:", error.message);
-        throw {
-            status: 500,
-            response: { estado: false, error: -1, message: error.message },
-        };
+        console.error("❌ Error al obtener conexión local (ENVIOS):", error.message);
+        throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
 }
 
-// opcional para cerrar limpio
-async function closeDWPool() {
-    if (dwPool) await dwPool.end().catch(() => { });
+async function getConnectionLocalCdc() {
+    try {
+        await ensurePools();
+        return await dwPoolCdc.getConnection();
+    } catch (error) {
+        console.error("❌ Error al obtener conexión local (CDC):", error.message);
+        throw { status: 500, response: { estado: false, error: -1, message: error.message } };
+    }
 }
+
+async function getConnectionLocalPendientes() {
+    try {
+        await ensurePools();
+        return await dwPoolPend.getConnection();
+    } catch (error) {
+        console.error("❌ Error al obtener conexión local (PENDIENTES):", error.message);
+        throw { status: 500, response: { estado: false, error: -1, message: error.message } };
+    }
+}
+
+async function closeDWPool() {
+    try { if (dwPoolEnvios) await dwPoolEnvios.end(); } catch { }
+    try { if (dwPoolCdc) await dwPoolCdc.end(); } catch { }
+    try { if (dwPoolPend) await dwPoolPend.end(); } catch { }
+}
+
+// ===== Export =====
+
+
 
 // --- Redis helpers ---
 async function getFromRedis(key) {
@@ -213,10 +260,16 @@ async function getCompanyById(companyId) {
 // --- Exportar todo ---
 module.exports = {
     getConnection,
-    getConnectionLocal,
     getFromRedis,
     redisClient,
     getProdDbConfig,
     executeQuery,
     getCompanyById,
+
+    // ✅ nuevos getters por pool
+    getConnectionLocalEnvios,
+    getConnectionLocalCdc,
+    getConnectionLocalPendientes,
+
+    closeDWPool,
 };

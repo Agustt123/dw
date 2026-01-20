@@ -1,4 +1,4 @@
-const { executeQuery, getConnectionLocal } = require("../../db");
+const { executeQuery, getConnectionLocalPendientes } = require("../../db");
 
 // ----------------- Config -----------------
 const Aprocesos = {};
@@ -353,7 +353,7 @@ async function pendientesHoy() {
 
   resetState(); // ✅ importantísimo
 
-  const conn = await getConnectionLocal();
+  const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
 
   try {

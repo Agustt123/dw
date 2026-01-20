@@ -1,4 +1,4 @@
-const { getConnectionLocal, executeQuery } = require("../../db.js");
+const { getConnectionLocalCdc, executeQuery } = require("../../db.js");
 
 // helper: cerrar conn sea pool o createConnection
 async function closeConn(conn) {
@@ -17,7 +17,7 @@ async function closeConn(conn) {
 async function EnviarcdcEstado(didOwner) {
     let connection;
     try {
-        connection = await getConnectionLocal();
+        connection = await getConnectionLocalCdc();
 
         // ✅ Trae didCliente en el mismo SELECT (sin N+1)
         const selectQuery = `
