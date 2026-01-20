@@ -357,7 +357,7 @@ async function pendientesHoy() {
   let fatalErr = null;
 
   try {
-    const FETCH = 200; // ✅ bajar de 5000 para no explotar transacción/locks
+    const FETCH = 1000; // ✅ bajar de 5000 para no explotar transacción/locks
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
