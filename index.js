@@ -122,7 +122,7 @@ async function runPendientesFixed() {
     runningPend = true;
     try {
         // Para ritmo fijo: timeout < 30s (si no, se acumulan ticks salteados)
-        await withTimeout(pendientesHoy(), 25000, "pendientesHoy");
+        await withTimeout(pendientesHoy(), 50000, "pendientesHoy");
         // console.log("✅ pendientesHoy OK");
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e.message || e);
