@@ -1,29 +1,45 @@
 const { executeQuery } = require("../../db");
 
 async function cantidadGlobal(conn, fecha) {
-    const sql = `
-    SELECT 
-      COALESCE(SUM(
-        CASE 
-          WHEN didsPaquete IS NULL OR TRIM(didsPaquete) = '' THEN 0
-          ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-        END
-      ), 0) AS cantidad_paquetes,
-      COUNT(*) AS filas
-    FROM home_app
-    WHERE fecha = ?
-      AND didOwner = 0
-      AND didChofer = 0
-      AND didCliente = 0
+  const sql = `
+    WITH RECURSIVE split AS (
+      SELECT
+        TRIM(SUBSTRING_INDEX(ha.didsPaquete, ',', 1)) AS token,
+        CASE
+          WHEN INSTR(ha.didsPaquete, ',') > 0
+            THEN SUBSTRING(ha.didsPaquete, INSTR(ha.didsPaquete, ',') + 1)
+          ELSE ''
+        END AS rest
+      FROM home_app ha
+      WHERE ha.dia = ?
+        AND ha.didOwner = 0
+        AND ha.didChofer = 0
+        AND ha.didCliente = 0
+        AND ha.didsPaquete IS NOT NULL
+        AND TRIM(ha.didsPaquete) <> ''
+
+      UNION ALL
+
+      SELECT
+        TRIM(SUBSTRING_INDEX(rest, ',', 1)) AS token,
+        CASE
+          WHEN INSTR(rest, ',') > 0
+            THEN SUBSTRING(rest, INSTR(rest, ',') + 1)
+          ELSE ''
+        END AS rest
+      FROM split
+      WHERE rest <> ''
+    )
+    SELECT
+      COUNT(DISTINCT token) AS cantidad
+    FROM split
+    WHERE token <> '';
   `;
 
-    const rows = await executeQuery(conn, sql, [fecha], true);
+  const rows = await executeQuery(conn, sql, [fecha], true);
+  const cantidad = Number(rows?.[0]?.cantidad ?? 0);
 
-    return {
-        fecha,
-        cantidad_paquetes: Number(rows?.[0]?.cantidad_paquetes ?? 0),
-        filas: Number(rows?.[0]?.filas ?? 0),
-    };
+  return { ok: true, cantidad, fecha };
 }
 
 module.exports = { cantidadGlobal };
