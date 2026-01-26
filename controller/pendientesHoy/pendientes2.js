@@ -49,6 +49,56 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   if (!Aprocesos[owner][cli][cho][est][dia][0]) Aprocesos[owner][cli][cho][est][dia][0] = [];
   Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
 }
+async function upsertIndexPositivos(conn, owner, cliente, chofer, estado, dia, paquetes) {
+  const uniq = [...new Set((paquetes || []).map(String))];
+  if (!uniq.length) return;
+
+  const CHUNK = 500;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const slice = uniq.slice(i, i + CHUNK);
+
+    const values = slice.map(() => "(?,?,?,?,?,?,1,1,NOW(),NOW())").join(",");
+    const sql = `
+      INSERT INTO home_app_idx
+        (didOwner, didCliente, didChofer, estado, dia, didPaquete, en_historial, en_cierre, updatedAt, createdAt)
+      VALUES ${values}
+      ON DUPLICATE KEY UPDATE
+        en_historial = 1,
+        en_cierre    = 1,
+        updatedAt    = NOW()
+    `;
+
+    const params = [];
+    for (const p of slice) {
+      params.push(owner, cliente, chofer, estado, dia, p);
+    }
+
+    await executeQuery(conn, sql, params, true);
+  }
+}
+
+async function updateIndexNegativos(conn, owner, cliente, chofer, estado, dia, paquetes) {
+  const uniq = [...new Set((paquetes || []).map(String))];
+  if (!uniq.length) return;
+
+  const CHUNK = 500;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const slice = uniq.slice(i, i + CHUNK);
+
+    const sql = `
+      UPDATE home_app_idx
+      SET en_cierre = 0, updatedAt = NOW()
+      WHERE didOwner   = ?
+        AND didCliente = ?
+        AND didChofer  = ?
+        AND estado     = ?
+        AND dia        = ?
+        AND didPaquete IN (${slice.map(() => "?").join(",")})
+    `;
+
+    await executeQuery(conn, sql, [owner, cliente, chofer, estado, dia, ...slice], true);
+  }
+}
 
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
@@ -63,11 +113,14 @@ async function buildAprocesosEstado(rows, connection) {
     const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
 
     const qPrev = `
-      SELECT estado, didChofer
-      FROM home_app
-      WHERE didOwner = ? AND FIND_IN_SET(?, didsPaquetes_cierre)
-    `;
+  SELECT estado, didChofer
+  FROM home_app_idx
+  WHERE didOwner = ?
+    AND didPaquete = ?
+    AND en_cierre = 1
+`;
     const prevRows = await executeQuery(connection, qPrev, [OW, envio]);
+
 
     for (const prev of prevRows) {
       const PREV_EST = nEstado(prev.estado);
@@ -235,7 +288,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
 
 // ----------------- Aplicar batch (chunked commits) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
-  const COMMIT_EVERY = 300; // ✅ ajustable: 100/300/500
+  const COMMIT_EVERY = 300;
   let ops = 0;
 
   const begin = async () => executeQuery(conn, "START TRANSACTION");
@@ -245,25 +298,34 @@ async function aplicarAprocesosAHommeApp(conn) {
   await begin();
 
   try {
-    for (const owner in Aprocesos) {
-      const porCliente = Aprocesos[owner];
-      for (const cliente in porCliente) {
-        const porChofer = porCliente[cliente];
-        for (const chofer in porChofer) {
-          const porEstado = porChofer[chofer];
-          for (const estado in porEstado) {
-            const porDia = porEstado[estado];
+    for (const ownerKey in Aprocesos) {
+      const owner = Number(ownerKey);
+      const porCliente = Aprocesos[ownerKey];
+
+      for (const clienteKey in porCliente) {
+        const cliente = Number(clienteKey);
+        const porChofer = porCliente[clienteKey];
+
+        for (const choferKey in porChofer) {
+          const chofer = Number(choferKey);
+          const porEstado = porChofer[choferKey];
+
+          for (const estadoKey in porEstado) {
+            const estado = Number(estadoKey);
+            const porDia = porEstado[estadoKey];
+
             for (const dia in porDia) {
               const nodo = porDia[dia];
-              const pos = [...new Set(nodo[1] || [])];
-              const neg = [...new Set(nodo[0] || [])];
-              if (pos.length === 0 && neg.length === 0) continue;
+              const pos = [...new Set(nodo?.[1] || [])];
+              const neg = [...new Set(nodo?.[0] || [])];
+              if (!pos.length && !neg.length) continue;
 
+              // ---- 1) Leer actual (sin FOR UPDATE para bajar locks) ----
               const sel = `
                 SELECT didsPaquete, didsPaquetes_cierre
                 FROM home_app
                 WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-                FOR UPDATE
+                LIMIT 1
               `;
               const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
@@ -281,18 +343,18 @@ async function aplicarAprocesosAHommeApp(conn) {
                 }
               }
 
+              // ---- 2) Aplicar deltas ----
               for (const p of pos) {
                 const k = String(p);
                 historialSet.add(k);
                 cierreSet.add(k);
               }
-              for (const p of neg) {
-                cierreSet.delete(String(p));
-              }
+              for (const p of neg) cierreSet.delete(String(p));
 
               const didsPaqueteStr = Array.from(historialSet).join(",");
               const didsPaquetesCierreStr = Array.from(cierreSet).join(",");
 
+              // ---- 3) Upsert legacy ----
               const upsert = `
                 INSERT INTO home_app
                   (didOwner, didCliente, didChofer, estado, didsPaquete, didsPaquetes_cierre, fecha, dia)
@@ -300,7 +362,7 @@ async function aplicarAprocesosAHommeApp(conn) {
                   (?, ?, ?, ?, ?, ?, NOW(), ?)
                 ON DUPLICATE KEY UPDATE
                   didsPaquete          = VALUES(didsPaquete),
-                  didsPaquetes_cierre = VALUES(didsPaquetes_cierre),
+                  didsPaquetes_cierre  = VALUES(didsPaquetes_cierre),
                   autofecha            = NOW()
               `;
               await executeQuery(conn, upsert, [
@@ -310,9 +372,14 @@ async function aplicarAprocesosAHommeApp(conn) {
                 dia
               ], true);
 
+              // ---- 4) ✅ Mantener índice ----
+              // Positivos: historial=1, cierre=1
+              await upsertIndexPositivos(conn, owner, cliente, chofer, estado, dia, pos);
+              // Negativos: cierre=0 (historial queda)
+              await updateIndexNegativos(conn, owner, cliente, chofer, estado, dia, neg);
+
               ops += 1;
 
-              // ✅ cortar transacción grande
               if (ops % COMMIT_EVERY === 0) {
                 await commit();
                 await begin();
@@ -329,15 +396,21 @@ async function aplicarAprocesosAHommeApp(conn) {
     throw e;
   }
 
+  // Marcar CDC como procesado
   if (idsProcesados.length > 0) {
     const CHUNK = 1000;
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
       const slice = idsProcesados.slice(i, i + CHUNK);
-      const updCdc = `UPDATE cdc SET procesado=1, fProcesado=NOW() WHERE id IN (${slice.map(() => "?").join(",")})`;
+      const updCdc = `
+        UPDATE cdc
+        SET procesado=1, fProcesado=NOW()
+        WHERE id IN (${slice.map(() => "?").join(",")})
+      `;
       await executeQuery(conn, updCdc, slice);
     }
   }
 }
+
 
 // ----------------- Batch principal -----------------
 let PENDIENTES_HOY_RUNNING = false;
