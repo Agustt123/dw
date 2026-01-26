@@ -173,7 +173,7 @@ function iniciarSchedulers() {
     // ✅ PENDIENTES fijo cada 30s
     setInterval(() => {
         runPendientesFixed().catch(() => { });
-    }, 30 * 1000);
+    }, 15 * 1000);
 }
 
 // =========================
