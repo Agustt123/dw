@@ -19,7 +19,7 @@ async function EnviarcdcEstado(didOwner) {
     try {
         connection = await getConnectionLocalCdc();
 
-        // ✅ Trae didCliente en el mismo SELECT (sin N+1)
+        // ✅ didCliente siempre (activo si existe, sino fallback a cualquiera)
         const selectQuery = `
       SELECT e.didOwner,
              e.didEnvio,
@@ -27,24 +27,23 @@ async function EnviarcdcEstado(didOwner) {
              e.autofecha,
              e.quien,
              e.didCadete,
-             v.didCliente
+             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente
       FROM estado e
-      LEFT JOIN envios v
-        ON v.didOwner = e.didOwner
-       AND v.didEnvio  = e.didEnvio
-       AND v.elim = 0
-       AND v.superado = 0
-      WHERE e.cdc = 0 AND e.didOwner = ?
-      
+      LEFT JOIN envios v_act
+        ON v_act.didOwner = e.didOwner
+       AND v_act.didEnvio = e.didEnvio
+       AND v_act.elim = 0
+       AND v_act.superado = 0
+      LEFT JOIN envios v_any
+        ON v_any.didOwner = e.didOwner
+       AND v_any.didEnvio = e.didEnvio
+      WHERE e.cdc = 0
+        AND e.didOwner = ?
       LIMIT 500
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
-
-        if (rows.length === 0) {
-            //     console.log(`ℹ️ No hay estados pendientes de CDC para el didOwner ${didOwner}`);
-            return;
-        }
+        if (rows.length === 0) return;
 
         const insertQuery = `
       INSERT IGNORE INTO cdc
@@ -64,8 +63,11 @@ async function EnviarcdcEstado(didOwner) {
         for (const row of rows) {
             const { didOwner, didEnvio, estado, autofecha, quien, didCadete, didCliente } = row;
 
+            // ✅ si el cliente es obligatorio, podés decidir qué hacer cuando falta:
+            // - o "continue" para no marcar cdc (y reintentar más tarde)
+            // - o insertar igual con null (y que el consumer lo resuelva)
+            // acá lo dejo insertando (pero podés cambiarlo)
             for (const ejecutar of ejecutadores) {
-                // En tu código estaba siempre didCliente, lo dejo igual para no cambiar lógica
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
@@ -80,12 +82,7 @@ async function EnviarcdcEstado(didOwner) {
             }
 
             const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio], true);
-            if (result.affectedRows === 0) {
-                //   console.log(`ℹ️ No se pudo actualizar el estado para didEnvio ${didEnvio}`);
-                continue;
-            }
-
-            //  console.log(`✅ CDC insertado x${ejecutadores.length} (estado) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
+            if (result.affectedRows === 0) continue;
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}:`, error);
@@ -102,32 +99,30 @@ async function EnviarcdAsignacion(didOwner) {
     try {
         connection = await getConnectionLocalCdc();
 
-        // ✅ Trae didCliente en el mismo SELECT (sin N+1)
+        // ✅ didCliente siempre (activo si existe, sino fallback a cualquiera)
         const selectQuery = `
       SELECT a.didOwner,
              a.didEnvio,
              a.operador,
              a.autofecha,
              a.estado,
-             v.didCliente
+             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente
       FROM asignaciones a
-      LEFT JOIN envios v
-        ON v.didOwner = a.didOwner
-       AND v.didEnvio  = a.didEnvio
-       AND v.elim = 0
-       AND v.superado = 0
+      LEFT JOIN envios v_act
+        ON v_act.didOwner = a.didOwner
+       AND v_act.didEnvio = a.didEnvio
+       AND v_act.elim = 0
+       AND v_act.superado = 0
+      LEFT JOIN envios v_any
+        ON v_any.didOwner = a.didOwner
+       AND v_any.didEnvio = a.didEnvio
       WHERE a.cdc = 0
         AND a.didOwner = ?
-      
       LIMIT 500
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
-
-        if (rows.length === 0) {
-            //       console.log(`ℹ️ No hay asignaciones pendientes de CDC para el didOwner ${didOwner}`);
-            return;
-        }
+        if (rows.length === 0) return;
 
         const insertQuery = `
       INSERT IGNORE INTO cdc
@@ -149,8 +144,7 @@ async function EnviarcdAsignacion(didOwner) {
             const valorEstado = (estado !== undefined) ? estado : null;
 
             for (const ejecutar of ejecutadores) {
-                const clienteInsertar = (ejecutar === "estado") ? (didCliente ?? null) : null;
-
+                // ✅ ACÁ estaba el bug: ahora SIEMPRE manda didCliente
                 await executeQuery(connection, insertQuery, [
                     didOwner,
                     didEnvio,
@@ -158,14 +152,12 @@ async function EnviarcdAsignacion(didOwner) {
                     operador || 0,
                     autofecha,
                     disparador,
-                    clienteInsertar,
+                    didCliente ?? null,
                     valorEstado,
                 ]);
             }
 
             await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
-
-            //      console.log(`✅ CDC insertado x${ejecutadores.length} (asignaciones) y actualizado → didOwner: ${didOwner}, didPaquete: ${didEnvio}`);
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}:`, error);
@@ -173,7 +165,6 @@ async function EnviarcdAsignacion(didOwner) {
         await closeConn(connection);
     }
 }
-
 
 EnviarcdcEstado(164);
 
