@@ -208,6 +208,7 @@ async function buildAprocesosEstado(rows, connection) {
 
 
 // ----------------- Builder para disparador = 'asignaciones' -----------------
+// ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
   for (const row of rows) {
     const OW = row.didOwner;
@@ -220,27 +221,37 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const dia = getDiaFromTS(row.fecha);
 
     if (CHO !== 0) {
-      // positivos
+      // positivos por chofer (como ya hacías)
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
 
-      // ✅ global absoluto
-      pushNodo(0, 0, 0, EST, dia, 1, envio);
+      // ✅ agregado por owner + global absoluto
+      pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
+      pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
 
-        // ✅ global absoluto
-        pushNodo(0, 0, 0, 69, dia, 1, envio);
+        // ✅ agregado por owner + global absoluto
+        pushNodoConGlobal(OW, 0, 0, 69, dia, 1, envio);
+        pushNodo(OW, CLI, 0, 69, dia, 1, envio);
+      } else {
+        // si querés mantener 69 como “presente/ausente” también desde asignaciones:
+        pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 69, dia, 0, envio);
       }
 
       if (ESTADOS_70.has(EST)) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
 
-        // ✅ global absoluto
-        pushNodo(0, 0, 0, 70, dia, 1, envio);
+        // ✅ agregado por owner + global absoluto
+        pushNodoConGlobal(OW, 0, 0, 70, dia, 1, envio);
+        pushNodo(OW, CLI, 0, 70, dia, 1, envio);
+      } else {
+        pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 70, dia, 0, envio);
       }
     }
 
@@ -256,27 +267,30 @@ async function buildAprocesosAsignaciones(conn, rows) {
     if (prev.length) {
       const choPrev = prev[0].didChofer || 0;
       if (choPrev !== 0) {
-        // negativos
+        // negativos por chofer anterior (como ya hacías)
         pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
         pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
 
-        // ✅ global absoluto
-        pushNodo(0, 0, 0, EST, dia, 0, envio);
+        // ✅ agregado por owner + global absoluto
+        pushNodoConGlobal(OW, 0, 0, EST, dia, 0, envio);
+        pushNodo(OW, CLI, 0, EST, dia, 0, envio);
 
         if (ESTADOS_69.has(EST)) {
           pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
 
-          // ✅ global absoluto
-          pushNodo(0, 0, 0, 69, dia, 0, envio);
+          // ✅ agregado por owner + global absoluto
+          pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
+          pushNodo(OW, CLI, 0, 69, dia, 0, envio);
         }
 
         if (ESTADOS_70.has(EST)) {
           pushNodo(OW, CLI, choPrev, 70, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 70, dia, 0, envio);
 
-          // ✅ global absoluto
-          pushNodo(0, 0, 0, 70, dia, 0, envio);
+          // ✅ agregado por owner + global absoluto
+          pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
+          pushNodo(OW, CLI, 0, 70, dia, 0, envio);
         }
       }
     }
