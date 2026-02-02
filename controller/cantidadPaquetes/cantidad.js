@@ -66,7 +66,7 @@ async function cantidadGlobalMesYDia(conn, fecha) {
   const cantidadDia = Number(rows?.[0]?.cantidadDia ?? 0);
   const cantidadMes = Number(rows?.[0]?.cantidadMes ?? 0);
 
-  const nombre = mesNombreConAnioES(fecha); // ✅ "Febrero 2026"
+  const nombre = mesNombreES(fecha); // ✅ "Febrero 2026"
 
   return {
     ok: true,
