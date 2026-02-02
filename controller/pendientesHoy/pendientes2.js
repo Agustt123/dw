@@ -69,17 +69,21 @@ async function getComboEntry(conn, owner, cliente, chofer, estado, dia) {
 }
 
 function applyDeltas(entry, posArr, negArr, estado) {
+  // positivos
   for (const p of posArr) {
     const k = String(p);
     entry.historial.add(k);
     entry.cierre.add(k);
   }
+
+  // ✅ ANY nunca resta
   if (estado !== ESTADO_ANY) {
-    for (const p of neg) cierreSet.delete(String(p));
+    for (const p of negArr) entry.cierre.delete(String(p));
   }
 
   entry.dirty = true;
 }
+
 
 async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   if (!entry?.dirty) return;
@@ -388,6 +392,7 @@ async function aplicarAprocesosAHommeApp(conn) {
 
               // ✅ 2) aplicar deltas en memoria
               applyDeltas(entry, pos, neg, estado);
+
 
 
               // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
