@@ -1,17 +1,14 @@
 const { executeQuery } = require("../../db");
 
 const ESTADO_ANY = 999;
-function mesNombreConAnioES(fechaYYYYMMDD) {
-  // "2026-02-02" -> "Febrero 2026"
+function mesNombreES(fechaYYYYMMDD) {
+  // "2026-02-02" -> "Febrero"
   const [y, m] = String(fechaYYYYMMDD).split("-").map(Number);
   const d = new Date(Date.UTC(y, (m || 1) - 1, 1));
-  const s = new Intl.DateTimeFormat("es-AR", {
-    month: "long",
-    year: "numeric",
-  }).format(d);
-
+  const s = new Intl.DateTimeFormat("es-AR", { month: "long" }).format(d);
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
 
 async function cantidadGlobalDia(conn, fecha) {
   const sql = `
