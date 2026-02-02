@@ -68,7 +68,7 @@ async function getComboEntry(conn, owner, cliente, chofer, estado, dia) {
   return entry;
 }
 
-function applyDeltas(entry, posArr, negArr) {
+function applyDeltas(entry, posArr, negArr, estado) {
   for (const p of posArr) {
     const k = String(p);
     entry.historial.add(k);
