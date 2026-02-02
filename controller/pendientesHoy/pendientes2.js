@@ -22,21 +22,105 @@ const nEstado = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// ----------------- Cache en memoria (GLOBAL) -----------------
+// key: "owner|cliente|chofer|estado|dia"
+const homeAppCache = new Map();
+
+const makeKey = (owner, cliente, chofer, estado, dia) =>
+  `${owner}|${cliente}|${chofer}|${estado}|${dia}`;
+
+function parseCSVToSet(s) {
+  const set = new Set();
+  if (!s || !String(s).trim()) return set;
+  for (const x of String(s).split(",").map(t => t.trim()).filter(Boolean)) set.add(x);
+  return set;
+}
+
+async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
+  const sel = `
+    SELECT didsPaquete, didsPaquetes_cierre
+    FROM home_app
+    WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
+    LIMIT 1
+  `;
+  const rows = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
+
+  if (rows.length) {
+    return {
+      historial: parseCSVToSet(rows[0].didsPaquete),
+      cierre: parseCSVToSet(rows[0].didsPaquetes_cierre),
+      dirty: false
+    };
+  }
+
+  return { historial: new Set(), cierre: new Set(), dirty: false };
+}
+
+async function getComboEntry(conn, owner, cliente, chofer, estado, dia) {
+  const k = makeKey(owner, cliente, chofer, estado, dia);
+  let entry = homeAppCache.get(k);
+  if (!entry) {
+    entry = await loadComboFromDB(conn, owner, cliente, chofer, estado, dia);
+    homeAppCache.set(k, entry);
+  }
+  return entry;
+}
+
+function applyDeltas(entry, posArr, negArr) {
+  for (const p of posArr) {
+    const k = String(p);
+    entry.historial.add(k);
+    entry.cierre.add(k);
+  }
+  for (const p of negArr) entry.cierre.delete(String(p));
+  entry.dirty = true;
+}
+
+async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
+  if (!entry?.dirty) return;
+
+  const didsPaqueteStr = Array.from(entry.historial).join(",");
+  const didsPaquetesCierreStr = Array.from(entry.cierre).join(",");
+
+  const upsert = `
+    INSERT INTO home_app
+      (didOwner, didCliente, didChofer, estado, didsPaquete, didsPaquetes_cierre, fecha, dia)
+    VALUES
+      (?, ?, ?, ?, ?, ?, NOW(), ?)
+    ON DUPLICATE KEY UPDATE
+      didsPaquete          = VALUES(didsPaquete),
+      didsPaquetes_cierre  = VALUES(didsPaquetes_cierre),
+      autofecha            = NOW()
+  `;
+  await executeQuery(conn, upsert, [
+    owner, cliente, chofer, estado,
+    didsPaqueteStr,
+    didsPaquetesCierreStr,
+    dia
+  ], true);
+
+  entry.dirty = false;
+}
+
 // ✅ limpiar estado global por corrida
 function resetState() {
-  // vaciar Aprocesos sin perder referencia
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
+
+  // ✅ cache solo para la corrida (si querés 2-3 días, esto lo cambiamos)
+  homeAppCache.clear();
 }
 
 // ----------------- Helpers -----------------
 function ensure(o, k) { return (o[k] ??= {}); }
+
+// ✅ NO más didOwner=0
 function pushNodoConGlobal(owner, cli, cho, est, dia, tipo, envio) {
   // owner real
   pushNodo(owner, cli, cho, est, dia, tipo, envio);
 
-  // global absoluto: todas las empresas
-  pushNodo(0, 0, 0, est, dia, tipo, envio);
+  // global por owner (empresa completa)
+  pushNodo(owner, 0, 0, est, dia, tipo, envio);
 }
 
 function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
@@ -49,56 +133,22 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   if (!Aprocesos[owner][cli][cho][est][dia][0]) Aprocesos[owner][cli][cho][est][dia][0] = [];
   Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
 }
-async function upsertIndexPositivos(conn, owner, cliente, chofer, estado, dia, paquetes) {
-  const uniq = [...new Set((paquetes || []).map(String))];
-  if (!uniq.length) return;
 
-  const CHUNK = 500;
-  for (let i = 0; i < uniq.length; i += CHUNK) {
-    const slice = uniq.slice(i, i + CHUNK);
-
-    const values = slice.map(() => "(?,?,?,?,?,?,1,1,NOW(),NOW())").join(",");
-    const sql = `
-      INSERT INTO home_app_idx
-        (didOwner, didCliente, didChofer, estado, dia, didPaquete, en_historial, en_cierre, updatedAt, createdAt)
-      VALUES ${values}
-      ON DUPLICATE KEY UPDATE
-        en_historial = 1,
-        en_cierre    = 1,
-        updatedAt    = NOW()
-    `;
-
-    const params = [];
-    for (const p of slice) {
-      params.push(owner, cliente, chofer, estado, dia, p);
-    }
-
-    await executeQuery(conn, sql, params, true);
-  }
+// ----------------- Prev desde HOME_APP (sin idx) -----------------
+// Busca combinaciones donde el envío está "en cierre" para ese owner.
+// OJO: depende de strings con coma, pero se usa SOLO para resolver "previo" por paquete.
+async function getPrevFromHomeApp(conn, owner, envio) {
+  const qPrev = `
+    SELECT estado, didChofer, didCliente, dia
+    FROM home_app
+    WHERE didOwner = ?
+      AND FIND_IN_SET(?, didsPaquetes_cierre) > 0
+    ORDER BY dia DESC, autofecha DESC
+    LIMIT 1
+  `;
+  return await executeQuery(conn, qPrev, [owner, String(envio)]);
 }
 
-async function updateIndexNegativos(conn, owner, cliente, chofer, estado, dia, paquetes) {
-  const uniq = [...new Set((paquetes || []).map(String))];
-  if (!uniq.length) return;
-
-  const CHUNK = 500;
-  for (let i = 0; i < uniq.length; i += CHUNK) {
-    const slice = uniq.slice(i, i + CHUNK);
-
-    const sql = `
-      UPDATE home_app_idx
-      SET en_cierre = 0, updatedAt = NOW()
-      WHERE didOwner   = ?
-        AND didCliente = ?
-        AND didChofer  = ?
-        AND estado     = ?
-        AND dia        = ?
-        AND didPaquete IN (${slice.map(() => "?").join(",")})
-    `;
-
-    await executeQuery(conn, sql, [owner, cliente, chofer, estado, dia, ...slice], true);
-  }
-}
 
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
@@ -112,51 +162,46 @@ async function buildAprocesosEstado(rows, connection) {
     const envio = String(row.didPaquete);
     const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
 
-    const qPrev = `
-  SELECT estado, didChofer
-  FROM home_app_idx
-  WHERE didOwner = ?
-    AND didPaquete = ?
-    AND en_cierre = 1
-`;
-    const prevRows = await executeQuery(connection, qPrev, [OW, envio]);
-
+    // ✅ prev desde home_app (sin idx)
+    const prevRows = await getPrevFromHomeApp(connection, OW, envio);
 
     for (const prev of prevRows) {
       const PREV_EST = nEstado(prev.estado);
       const PREV_CHO = Number(prev.didChofer) || 0;
+      const PREV_CLI = Number(prev.didCliente) || 0;
+      const PREV_DIA = prev.dia || dia; // fallback
 
       // negativos previos
-      pushNodoConGlobal(OW, 0, 0, PREV_EST, dia, 0, envio);
-      pushNodo(OW, CLI, 0, PREV_EST, dia, 0, envio);
+      pushNodoConGlobal(OW, 0, 0, PREV_EST, PREV_DIA, 0, envio);
+      pushNodo(OW, PREV_CLI, 0, PREV_EST, PREV_DIA, 0, envio);
 
       if (PREV_CHO !== 0) {
-        pushNodo(OW, 0, PREV_CHO, PREV_EST, dia, 0, envio);
-        pushNodo(OW, CLI, PREV_CHO, PREV_EST, dia, 0, envio);
+        pushNodo(OW, 0, PREV_CHO, PREV_EST, PREV_DIA, 0, envio);
+        pushNodo(OW, PREV_CLI, PREV_CHO, PREV_EST, PREV_DIA, 0, envio);
       }
 
       if (ESTADOS_69.has(PREV_EST)) {
-        pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
-        pushNodo(OW, CLI, 0, 69, dia, 0, envio);
+        pushNodoConGlobal(OW, 0, 0, 69, PREV_DIA, 0, envio);
+        pushNodo(OW, PREV_CLI, 0, 69, PREV_DIA, 0, envio);
 
         if (PREV_CHO !== 0) {
-          pushNodo(OW, 0, PREV_CHO, 69, dia, 0, envio);
-          pushNodo(OW, CLI, PREV_CHO, 69, dia, 0, envio);
+          pushNodo(OW, 0, PREV_CHO, 69, PREV_DIA, 0, envio);
+          pushNodo(OW, PREV_CLI, PREV_CHO, 69, PREV_DIA, 0, envio);
         }
       }
 
       if (ESTADOS_70.has(PREV_EST)) {
-        pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
-        pushNodo(OW, CLI, 0, 70, dia, 0, envio);
+        pushNodoConGlobal(OW, 0, 0, 70, PREV_DIA, 0, envio);
+        pushNodo(OW, PREV_CLI, 0, 70, PREV_DIA, 0, envio);
 
         if (PREV_CHO !== 0) {
-          pushNodo(OW, 0, PREV_CHO, 70, dia, 0, envio);
-          pushNodo(OW, CLI, PREV_CHO, 70, dia, 0, envio);
+          pushNodo(OW, 0, PREV_CHO, 70, PREV_DIA, 0, envio);
+          pushNodo(OW, PREV_CLI, PREV_CHO, 70, PREV_DIA, 0, envio);
         }
       }
     }
 
-    // positivos actuales
+    // positivos actuales (para el dia actual del evento)
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
@@ -178,8 +223,7 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // combinaciones por chofer (las dejamos igual, NO las agregamos al global,
-    // porque vos pediste global solo en owner=0/cliente=0/chofer=0)
+    // combinaciones por chofer
     if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
@@ -206,8 +250,6 @@ async function buildAprocesosEstado(rows, connection) {
   return Aprocesos;
 }
 
-
-// ----------------- Builder para disparador = 'asignaciones' -----------------
 // ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
   for (const row of rows) {
@@ -221,11 +263,11 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const dia = getDiaFromTS(row.fecha);
 
     if (CHO !== 0) {
-      // positivos por chofer (como ya hacías)
+      // positivos por chofer
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
 
-      // ✅ agregado por owner + global absoluto
+      // global por owner (sin owner=0)
       pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
       pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
@@ -233,11 +275,9 @@ async function buildAprocesosAsignaciones(conn, rows) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
         pushNodo(OW, 0, CHO, 69, dia, 1, envio);
 
-        // ✅ agregado por owner + global absoluto
         pushNodoConGlobal(OW, 0, 0, 69, dia, 1, envio);
         pushNodo(OW, CLI, 0, 69, dia, 1, envio);
       } else {
-        // si querés mantener 69 como “presente/ausente” también desde asignaciones:
         pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
         pushNodo(OW, CLI, 0, 69, dia, 0, envio);
       }
@@ -246,7 +286,6 @@ async function buildAprocesosAsignaciones(conn, rows) {
         pushNodo(OW, CLI, CHO, 70, dia, 1, envio);
         pushNodo(OW, 0, CHO, 70, dia, 1, envio);
 
-        // ✅ agregado por owner + global absoluto
         pushNodoConGlobal(OW, 0, 0, 70, dia, 1, envio);
         pushNodo(OW, CLI, 0, 70, dia, 1, envio);
       } else {
@@ -267,11 +306,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
     if (prev.length) {
       const choPrev = prev[0].didChofer || 0;
       if (choPrev !== 0) {
-        // negativos por chofer anterior (como ya hacías)
+        // negativos por chofer anterior
         pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
         pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
 
-        // ✅ agregado por owner + global absoluto
         pushNodoConGlobal(OW, 0, 0, EST, dia, 0, envio);
         pushNodo(OW, CLI, 0, EST, dia, 0, envio);
 
@@ -279,7 +317,6 @@ async function buildAprocesosAsignaciones(conn, rows) {
           pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
 
-          // ✅ agregado por owner + global absoluto
           pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
           pushNodo(OW, CLI, 0, 69, dia, 0, envio);
         }
@@ -288,7 +325,6 @@ async function buildAprocesosAsignaciones(conn, rows) {
           pushNodo(OW, CLI, choPrev, 70, dia, 0, envio);
           pushNodo(OW, 0, choPrev, 70, dia, 0, envio);
 
-          // ✅ agregado por owner + global absoluto
           pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
           pushNodo(OW, CLI, 0, 70, dia, 0, envio);
         }
@@ -300,7 +336,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
   return Aprocesos;
 }
 
-// ----------------- Aplicar batch (chunked commits) -----------------
+// ----------------- Aplicar batch (cache + flush) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
   const COMMIT_EVERY = 300;
   let ops = 0;
@@ -334,66 +370,16 @@ async function aplicarAprocesosAHommeApp(conn) {
               const neg = [...new Set(nodo?.[0] || [])];
               if (!pos.length && !neg.length) continue;
 
-              // ---- 1) Leer actual (sin FOR UPDATE para bajar locks) ----
-              const sel = `
-                SELECT didsPaquete, didsPaquetes_cierre
-                FROM home_app
-                WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
-                LIMIT 1
-              `;
-              const actual = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
+              // ✅ 1) cargar combo 1 vez desde DB (lazy)
+              const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
 
-              let historialSet = new Set();
-              let cierreSet = new Set();
+              // ✅ 2) aplicar deltas en memoria
+              applyDeltas(entry, pos, neg);
 
-              if (actual.length > 0) {
-                const sHist = actual[0].didsPaquete || "";
-                if (sHist.trim()) {
-                  for (const x of sHist.split(",").map(t => t.trim()).filter(Boolean)) historialSet.add(x);
-                }
-                const sCierre = actual[0].didsPaquetes_cierre || "";
-                if (sCierre.trim()) {
-                  for (const x of sCierre.split(",").map(t => t.trim()).filter(Boolean)) cierreSet.add(x);
-                }
-              }
-
-              // ---- 2) Aplicar deltas ----
-              for (const p of pos) {
-                const k = String(p);
-                historialSet.add(k);
-                cierreSet.add(k);
-              }
-              for (const p of neg) cierreSet.delete(String(p));
-
-              const didsPaqueteStr = Array.from(historialSet).join(",");
-              const didsPaquetesCierreStr = Array.from(cierreSet).join(",");
-
-              // ---- 3) Upsert legacy ----
-              const upsert = `
-                INSERT INTO home_app
-                  (didOwner, didCliente, didChofer, estado, didsPaquete, didsPaquetes_cierre, fecha, dia)
-                VALUES
-                  (?, ?, ?, ?, ?, ?, NOW(), ?)
-                ON DUPLICATE KEY UPDATE
-                  didsPaquete          = VALUES(didsPaquete),
-                  didsPaquetes_cierre  = VALUES(didsPaquetes_cierre),
-                  autofecha            = NOW()
-              `;
-              await executeQuery(conn, upsert, [
-                owner, cliente, chofer, estado,
-                didsPaqueteStr,
-                didsPaquetesCierreStr,
-                dia
-              ], true);
-
-              // ---- 4) ✅ Mantener índice ----
-              // Positivos: historial=1, cierre=1
-              await upsertIndexPositivos(conn, owner, cliente, chofer, estado, dia, pos);
-              // Negativos: cierre=0 (historial queda)
-              await updateIndexNegativos(conn, owner, cliente, chofer, estado, dia, neg);
+              // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
+              await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
 
               ops += 1;
-
               if (ops % COMMIT_EVERY === 0) {
                 await commit();
                 await begin();
@@ -425,26 +411,25 @@ async function aplicarAprocesosAHommeApp(conn) {
   }
 }
 
-
 // ----------------- Batch principal -----------------
 let PENDIENTES_HOY_RUNNING = false;
 
 async function pendientesHoy() {
-  // ✅ Opción A: no permitir solape
   if (PENDIENTES_HOY_RUNNING) {
     console.log("⏭️ pendientesHoy ya está corriendo, salteo esta ejecución");
     return { ok: true, skipped: true };
   }
 
+
   PENDIENTES_HOY_RUNNING = true;
 
-  resetState(); // ✅ importantísimo
+  resetState();
 
   const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
 
   try {
-    const FETCH = 1000; // ✅ bajar de 5000 para no explotar transacción/locks
+    const FETCH = 1000;
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha
@@ -459,26 +444,24 @@ async function pendientesHoy() {
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
-    console.log("llegamos 1 ");
+
+    console.log("llegamos 1");
 
     await buildAprocesosEstado(rowsEstado, conn);
-    console.log("llegamos 2 ");
+    console.log("llegamos 2");
 
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
-    console.log("llegamos 3 ");
+    console.log("llegamos 3");
 
     await aplicarAprocesosAHommeApp(conn);
-    console.log("llegamos 4 ");
-
-
+    console.log("llegamos 4");
 
     return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
   } catch (err) {
     fatalErr = err;
     console.error("❌ Error batch:", err);
-    throw err; // ✅ para que el scheduler no “mienta”
+    throw err;
   } finally {
-    // ✅ SIEMPRE liberar el candado aunque explote
     PENDIENTES_HOY_RUNNING = false;
 
     try {
@@ -496,12 +479,11 @@ async function pendientesHoy() {
       } else if (conn?.release) {
         conn.release();
       }
-    } catch (_) { /* ignore */ }
+    } catch (_) { }
   }
 }
 
-
-// ❌ NO ejecutar automáticamente al importar
+// ✅ NO ejecutar automáticamente al importar
 pendientesHoy();
 
 module.exports = { pendientesHoy };
