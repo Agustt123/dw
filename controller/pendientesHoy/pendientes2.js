@@ -6,6 +6,8 @@ const idsProcesados = [];
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
+const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
+
 
 const TZ = "America/Argentina/Buenos_Aires";
 
@@ -72,7 +74,10 @@ function applyDeltas(entry, posArr, negArr) {
     entry.historial.add(k);
     entry.cierre.add(k);
   }
-  for (const p of negArr) entry.cierre.delete(String(p));
+  if (estado !== ESTADO_ANY) {
+    for (const p of neg) cierreSet.delete(String(p));
+  }
+
   entry.dirty = true;
 }
 
@@ -119,7 +124,7 @@ function pushNodoConGlobal(owner, cli, cho, est, dia, tipo, envio) {
   // owner real
   pushNodo(owner, cli, cho, est, dia, tipo, envio);
 
-  // global por owner (empresa completa)
+  // global por owner (empresa completa) - NO didOwner=0
   pushNodo(owner, 0, 0, est, dia, tipo, envio);
 }
 
@@ -204,6 +209,10 @@ async function buildAprocesosEstado(rows, connection) {
     // positivos actuales (para el dia actual del evento)
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
+    // ✅ ANY: existió en el día (no depende del estado)
+    pushNodo(OW, 0, 0, ESTADO_ANY, dia, 1, envio);
+    pushNodo(OW, CLI, 0, ESTADO_ANY, dia, 1, envio);
+
 
     // 69
     if (ESTADOS_69.has(EST)) {
@@ -270,6 +279,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
       // global por owner (sin owner=0)
       pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
       pushNodo(OW, CLI, 0, EST, dia, 1, envio);
+      // ✅ ANY: existió en el día
+      pushNodo(OW, 0, 0, ESTADO_ANY, dia, 1, envio);
+      pushNodo(OW, CLI, 0, ESTADO_ANY, dia, 1, envio);
+
 
       if (ESTADOS_69.has(EST)) {
         pushNodo(OW, CLI, CHO, 69, dia, 1, envio);
