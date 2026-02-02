@@ -387,7 +387,8 @@ async function aplicarAprocesosAHommeApp(conn) {
               const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
 
               // ✅ 2) aplicar deltas en memoria
-              applyDeltas(entry, pos, neg);
+              applyDeltas(entry, pos, neg, estado);
+
 
               // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
               await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
