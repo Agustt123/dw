@@ -1,7 +1,7 @@
 
 // routes/informeColecta.js
 const express = require('express');
-const { cantidadGlobal } = require('../controller/cantidadPaquetes/cantidad');
+const { cantidadGlobal, cantidadGlobalMesYDia } = require('../controller/cantidadPaquetes/cantidad');
 const { getConnectionLocalCdc } = require('../db');
 
 const cantidad = express.Router();
@@ -14,7 +14,7 @@ cantidad.post('/', async (req, res) => {
     const db = await getConnectionLocalCdc();
 
     try {
-        const resultado = await cantidadGlobal(db, dia || "2026-01-13");
+        const resultado = await cantidadGlobalMesYDia(db, dia || "2026-01-13");
         return res.status(200).json(resultado);
     } catch (error) {
         console.error("Error /byChofer:", error);
