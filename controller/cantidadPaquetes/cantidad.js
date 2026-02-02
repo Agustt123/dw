@@ -1,6 +1,17 @@
 const { executeQuery } = require("../../db");
 
 const ESTADO_ANY = 999;
+function mesNombreConAnioES(fechaYYYYMMDD) {
+  // "2026-02-02" -> "Febrero 2026"
+  const [y, m] = String(fechaYYYYMMDD).split("-").map(Number);
+  const d = new Date(Date.UTC(y, (m || 1) - 1, 1));
+  const s = new Intl.DateTimeFormat("es-AR", {
+    month: "long",
+    year: "numeric",
+  }).format(d);
+
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 async function cantidadGlobalDia(conn, fecha) {
   const sql = `
@@ -26,7 +37,6 @@ async function cantidadGlobalDia(conn, fecha) {
 
 // ✅ Devuelve total del mes + total del día (para la fecha que mandes)
 async function cantidadGlobalMesYDia(conn, fecha) {
-  // fecha: "YYYY-MM-DD"
   const mesPrefix = String(fecha).slice(0, 7); // "YYYY-MM"
 
   const sql = `
@@ -59,7 +69,17 @@ async function cantidadGlobalMesYDia(conn, fecha) {
   const cantidadDia = Number(rows?.[0]?.cantidadDia ?? 0);
   const cantidadMes = Number(rows?.[0]?.cantidadMes ?? 0);
 
-  return { ok: true, fecha, mes: mesPrefix, cantidadDia, cantidadMes };
+  const nombre = mesNombreConAnioES(fecha); // ✅ "Febrero 2026"
+
+  return {
+    ok: true,
+    fecha,
+    mes: mesPrefix,
+    nombre,
+    cantidadDia,
+    cantidadMes,
+  };
 }
+
 
 module.exports = { cantidadGlobalDia, cantidadGlobalMesYDia };
