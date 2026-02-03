@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const { getConnectionLocalCdc } = require("../../db");
-const monitorear = require("../../route/monitoreo");
+
+const { monitoreo } = require("./monitoreo");
 
 
 
@@ -9,7 +10,7 @@ function startMonitoreoJob() {
     cron.schedule("*/10 * * * *", async () => {
         const db = await getConnectionLocalCdc();
         try {
-            const r = await monitorear(db);
+            const r = await monitoreo(db);
             console.log("[MONITOREO JOB] ok:", r);
         } catch (err) {
             console.error("[MONITOREO JOB] error:", err.message);
