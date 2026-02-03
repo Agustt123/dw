@@ -10,6 +10,7 @@ const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 const informeColecta = require("./route/informe-colecta.js");
 const cantidad = require("./route/cantidad.js");
 const monitorear = require("./route/monitoreo.js");
+const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
 
 const app = express();
 
@@ -186,6 +187,7 @@ function iniciarSchedulers() {
         await actualizarEmpresas();
 
         iniciarSchedulers();
+        startMonitoreoJob();
 
         app.listen(PORT, () => console.log(`Servidor escuchando en http://localhost:${PORT}`));
 
