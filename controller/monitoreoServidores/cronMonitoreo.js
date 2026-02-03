@@ -7,7 +7,7 @@ const { monitoreo } = require("./monitoreo");
 
 function startMonitoreoJob() {
     // cada 10 minutos: minuto 0,10,20,30,40,50
-    cron.schedule("*/10 * * * *", async () => {
+    cron.schedule("*/5 * * * *", async () => {
         const db = await getConnectionLocalCdc();
         try {
             const r = await monitoreo(db);
