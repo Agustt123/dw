@@ -9,6 +9,7 @@ const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCD
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 const informeColecta = require("./route/informe-colecta.js");
 const cantidad = require("./route/cantidad.js");
+const monitorear = require("./route/monitoreo.js");
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use(cors({ origin: "*", methods: ["GET", "POST", "OPTIONS"], allowedHeaders:
 app.use("/informe-colecta", informeColecta);
 app.get("/ping", (req, res) => res.status(200).json({ estado: true, mensaje: "OK" }));
 app.use("/cantidad", cantidad);
+app.use("/monitoreo", monitorear);
 const PORT = 13000;
 
 let empresasDB = null;
