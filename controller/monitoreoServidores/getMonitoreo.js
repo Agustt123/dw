@@ -1,4 +1,4 @@
-const axios = require("axios");
+
 const { executeQuery } = require("../../db");
 
 async function getMonitoreo(db) {

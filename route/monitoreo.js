@@ -4,7 +4,7 @@ const express = require('express');
 
 const { getConnectionLocalCdc, getConnection } = require('../db');
 const { monitoreo } = require('../controller/monitoreoServidores/monitoreo');
-const { post, get } = require('./informe-colecta');
+
 const { getMonitoreo } = require('../controller/monitoreoServidores/getMonitoreo');
 
 const monitorear = express.Router();
