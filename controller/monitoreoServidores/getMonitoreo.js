@@ -16,7 +16,6 @@ async function getMonitoreo(db) {
 }
 
 
-await(db, sql, values);
 
 
 module.exports = { getMonitoreo };
