@@ -11,6 +11,7 @@ const informeColecta = require("./route/informe-colecta.js");
 const cantidad = require("./route/cantidad.js");
 const monitorear = require("./route/monitoreo.js");
 const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
+const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
 
 const app = express();
 
@@ -188,6 +189,7 @@ function iniciarSchedulers() {
 
         iniciarSchedulers();
         startMonitoreoJob();
+        startMonitoreoMetricas();
 
         app.listen(PORT, () => console.log(`Servidor escuchando en http://localhost:${PORT}`));
 
