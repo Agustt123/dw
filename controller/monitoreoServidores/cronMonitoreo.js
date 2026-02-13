@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const { getConnectionLocalCdc } = require("../../db");
+const { getConnectionLocalCdc, executeQuery } = require("../../db");
 
 const { monitoreo } = require("./monitoreo");
 
