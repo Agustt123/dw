@@ -22,4 +22,48 @@ function startMonitoreoJob() {
     console.log("[MONITOREO JOB] scheduler iniciado (cada 10 min)");
 }
 
-module.exports = { startMonitoreoJob };
+async function obtenerMetricasUltimaCorrida() {
+    const db = await getConnectionLocalCdc();
+
+    // 1) último did
+    const didRows = await executeQuery(
+        db,
+        "SELECT IFNULL(MAX(did), 0) AS did FROM sat_monitoreo_recursos",
+        []
+    );
+
+    const did = Number(didRows?.[0]?.did ?? 0);
+    if (!did) {
+        return { did: null, rows: [] };
+    }
+
+    // 2) todas las filas de ese did
+    const rows = await executeQuery(
+        db,
+        `
+    SELECT
+      did,
+      servidor,
+      endpoint,
+      ok,
+      codigoHttp,
+      latenciaMs,
+      error,
+      usoRam,
+      usoCpu,
+      usoDisco,
+      temperaturaCpu,
+      carga1m,
+      ramProcesoMb,
+      cpuProceso
+    FROM sat_monitoreo_recursos
+    WHERE did = ?
+    ORDER BY servidor ASC
+    `,
+        [did]
+    );
+
+    return { did, rows };
+}
+
+module.exports = { startMonitoreoJob, obtenerMetricasUltimaCorrida };
