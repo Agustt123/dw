@@ -21,10 +21,13 @@ async function getNextDid(db) {
 }
 
 function pickSimple(respData) {
-    // Si el endpoint devuelve { simple, raw } -> usamos simple
-    // Si devuelve simple directo -> usamos respData
     if (!respData) return null;
     return respData.simple || respData;
+}
+
+function maxOrNull(values) {
+    const nums = values.filter((v) => Number.isFinite(v));
+    return nums.length ? Math.max(...nums) : null;
 }
 
 async function monitoreoRecursos(
@@ -48,11 +51,10 @@ async function monitoreoRecursos(
 ) {
     const timeoutMs = options.timeoutMs ?? 2000;
 
-    // 1) did único para TODA la corrida
+    // 1) did único para TODA la corrida (por microservicio)
     const did = await getNextDid(db);
     if (!did) throw new Error("No se pudo obtener did.");
 
-    // Query de insert (misma para todos)
     const insertSql = `
     INSERT INTO sat_monitoreo_recursos
     (did, servidor, endpoint, ok, codigoHttp, latenciaMs, error,
@@ -100,7 +102,6 @@ async function monitoreoRecursos(
 
             const simple = pickSimple(resp.data);
 
-            // mapeo a columnas (si no viene, queda null)
             if (simple) {
                 usoRam = toNumberOrNull(simple.usoRamPct);
                 usoCpu = toNumberOrNull(simple.usoCpuPct);
@@ -126,7 +127,7 @@ async function monitoreoRecursos(
             }
         } catch (err) {
             ok = 0;
-            error = (err && err.message) ? err.message.slice(0, 255) : "ERROR";
+            error = err?.message ? err.message.slice(0, 255) : "ERROR";
             console.error(`[SAT-RECURSOS] ${s.key} ERROR`, error);
         }
 
@@ -152,17 +153,80 @@ async function monitoreoRecursos(
         results.push({
             did,
             servidor: s.key,
+            endpoint,
             ok,
             codigoHttp,
             latenciaMs,
+            error,
             usoRam,
             usoCpu,
             usoDisco,
             temperaturaCpu,
+            carga1m,
+            ramProcesoMb,
+            cpuProceso,
         });
     }
 
-    return { did, results };
+    // 3) Agregamos un DID MÁS para el "microservicio conjunto" con máximos
+    const didConjunto = await getNextDid(db);
+    if (!didConjunto) throw new Error("No se pudo obtener didConjunto.");
+
+    const latenciaMax = maxOrNull(results.map((r) => r.latenciaMs));
+    const usoRamMax = maxOrNull(results.map((r) => r.usoRam));
+    const usoCpuMax = maxOrNull(results.map((r) => r.usoCpu));
+    const usoDiscoMax = maxOrNull(results.map((r) => r.usoDisco));
+    const tempMax = maxOrNull(results.map((r) => r.temperaturaCpu));
+
+    const carga1mMax = maxOrNull(results.map((r) => r.carga1m));
+    const ramProcesoMax = maxOrNull(results.map((r) => r.ramProcesoMb));
+    const cpuProcesoMax = maxOrNull(results.map((r) => r.cpuProceso));
+
+    // (opcional) ok del conjunto: 1 si al menos uno estuvo ok, sino 0
+    const okConjunto = results.some((r) => r.ok === 1) ? 1 : 0;
+
+    const valuesConjunto = [
+        didConjunto,
+        "conjunto",
+        "ALL",
+        okConjunto,
+        null, // codigoHttp
+        latenciaMax,
+        null, // error
+        usoRamMax === null ? null : round1(usoRamMax),
+        usoCpuMax === null ? null : round1(usoCpuMax),
+        usoDiscoMax === null ? null : round1(usoDiscoMax),
+        tempMax === null ? null : round1(tempMax),
+        carga1mMax === null ? null : round1(carga1mMax),
+        ramProcesoMax === null ? null : round1(ramProcesoMax),
+        cpuProcesoMax === null ? null : round1(cpuProcesoMax),
+    ];
+
+    await executeQuery(db, insertSql, valuesConjunto);
+
+    const conjuntoRow = {
+        did: didConjunto,
+        servidor: "conjunto",
+        endpoint: "ALL",
+        ok: okConjunto,
+        codigoHttp: null,
+        latenciaMs: latenciaMax,
+        error: null,
+        usoRam: valuesConjunto[7],
+        usoCpu: valuesConjunto[8],
+        usoDisco: valuesConjunto[9],
+        temperaturaCpu: valuesConjunto[10],
+        carga1m: valuesConjunto[11],
+        ramProcesoMb: valuesConjunto[12],
+        cpuProceso: valuesConjunto[13],
+    };
+
+    return {
+        did,
+        didConjunto,
+        results,
+        conjunto: conjuntoRow,
+    };
 }
 
 module.exports = { monitoreoRecursos };
