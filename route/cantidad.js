@@ -11,7 +11,10 @@ const cantidad = express.Router();
 cantidad.post('/', async (req, res) => {
 
     const { dia } = req.body || {};
+    console.log("ANTES getConnection");
     const db = await getConnectionLocalCdc();
+    console.log("DESPUES getConnection");
+
 
     try {
         const resultado = await cantidadGlobalMesYDia(db, dia || "2026-01-13");
