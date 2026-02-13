@@ -1,29 +1,10 @@
-// index.js
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-
+// server.jobs.js
 const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
 const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
-const informeColecta = require("./route/informe-colecta.js");
-const cantidad = require("./route/cantidad.js");
-const monitorear = require("./route/monitoreo.js");
 const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
 const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
-
-const app = express();
-
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
-app.use(cors({ origin: "*", methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
-
-app.use("/informe-colecta", informeColecta);
-app.get("/ping", (req, res) => res.status(200).json({ estado: true, mensaje: "OK" }));
-app.use("/cantidad", cantidad);
-app.use("/monitoreo", monitorear);
-const PORT = 13000;
 
 let empresasDB = null;
 
@@ -56,7 +37,7 @@ function withTimeout(promise, ms, label) {
 }
 
 // =========================
-// CDC (solo CDC, sin pendientes)
+// CDC (solo CDC)
 // =========================
 async function correrCdcUnaVez() {
     await actualizarEmpresas();
@@ -81,8 +62,7 @@ async function correrCdcUnaVez() {
 // =========================
 // Locks
 // =========================
-let runningEnvios = null;
-
+let runningEnvios = false;
 let runningCdc = false;
 let cdcPending = false;
 
@@ -93,9 +73,6 @@ let runningPend = false;
 // =========================
 async function runCdcSafely() {
     if (runningCdc) { cdcPending = true; return; }
-
-    // Si querés que CDC corra aunque Envios esté corriendo, BORRÁ este if.
-    // (Yo lo dejo para bajar presión total. Con pools separados podrías sacarlo.)
     if (runningEnvios) { cdcPending = true; return; }
 
     runningCdc = true;
@@ -116,19 +93,17 @@ async function runCdcSafely() {
 }
 
 // =========================
-// Pendientes fijo cada 30s (no se pisa)
+// Pendientes (no se pisa)
 // =========================
 async function runPendientesFixed() {
     if (runningPend) {
-        console.log("⏭️ pendientesHoy sigue corriendo, salteo este tick (30s)");
+        console.log("⏭️ pendientesHoy sigue corriendo, salteo tick");
         return;
     }
 
     runningPend = true;
     try {
-        // Para ritmo fijo: timeout < 30s (si no, se acumulan ticks salteados)
-        await withTimeout(pendientesHoy(), 50000, "pendientesHoy");
-        // console.log("✅ pendientesHoy OK");
+        await withTimeout(pendientesHoy(), 25000, "pendientesHoy"); // < intervalo
     } catch (e) {
         console.error("❌ Error en pendientesHoy:", e.message || e);
     } finally {
@@ -137,51 +112,59 @@ async function runPendientesFixed() {
 }
 
 // =========================
+// Envios runner (no se pisa y NO se cuelga el lock)
+// =========================
+async function runEnviosTick() {
+    if (runningEnvios) {
+        console.log("⏭️ Envios sigue corriendo, no arranco otro");
+        return;
+    }
+
+    runningEnvios = true;
+    console.log("🔁 Envios: iniciando sincronización...");
+
+    const p = Promise.resolve().then(() => sincronizarEnviosUnaVez());
+
+    // OJO: si sincronizarEnviosUnaVez queda colgado, igual liberamos lock por timeout
+    await withTimeout(p, 55 * 1000, "sincronizarEnviosUnaVez")
+        .then((stats) => {
+            if (!stats) return;
+            const mins = (stats.elapsedMs || 1) / 60000;
+            const enviosMin = (stats.envios / mins).toFixed(1);
+            console.log(
+                `✅ Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, ` +
+                `empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envíos/min`
+            );
+        })
+        .catch((e) => {
+            console.error("⏱️ Envios timeout:", e.message || e);
+        });
+
+    // liberamos lock SIEMPRE (no await del p si quedó colgado)
+    runningEnvios = false;
+
+    // si CDC quedó pendiente, lo largamos
+    if (cdcPending) runCdcSafely().catch(() => { });
+}
+
+// =========================
 // Schedulers
 // =========================
 function iniciarSchedulers() {
     // ENVÍOS + CDC (cada 120s)
     setInterval(() => {
-        // ENVÍOS
-        if (!runningEnvios) {
-            console.log("🔁 Envios: iniciando sincronización...");
-            runningEnvios = sincronizarEnviosUnaVez();
-
-            withTimeout(runningEnvios, 55 * 1000, "sincronizarEnviosUnaVez")
-                .then((stats) => {
-                    const mins = (stats.elapsedMs || 1) / 60000;
-                    const enviosMin = (stats.envios / mins).toFixed(1);
-                    console.log(
-                        `✅ Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, ` +
-                        `empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envíos/min`
-                    );
-                })
-                .catch((e) => {
-                    console.error("⏱️ Envios se pasó de 55s (sigue corriendo):", e.message || e);
-                })
-                .finally(async () => {
-                    try { await runningEnvios; } catch { }
-                    runningEnvios = null;
-
-                    // Si CDC quedó pendiente mientras Envios corría, arrancalo ahora
-                    if (cdcPending) runCdcSafely().catch(() => { });
-                });
-        } else {
-            console.log("⏭️ Envios sigue corriendo, no arranco otro");
-        }
-
-        // CDC (intenta en cada tick)
+        runEnviosTick().catch(() => { });
         runCdcSafely().catch(() => { });
     }, 120 * 1000);
 
-    // ✅ PENDIENTES fijo cada 30s
+    // Pendientes cada 30s (tu comentario decía 30s)
     setInterval(() => {
         runPendientesFixed().catch(() => { });
-    }, 15 * 1000);
+    }, 30 * 1000);
 }
 
 // =========================
-// Bootstrap
+// Bootstrap JOBS
 // =========================
 (async () => {
     try {
@@ -191,10 +174,10 @@ function iniciarSchedulers() {
         startMonitoreoJob();
         startMonitoreoMetricas();
 
-        app.listen(PORT, () => console.log(`Servidor escuchando en http://localhost:${PORT}`));
+        console.log("✅ JOBS corriendo (envios/cdc/pendientes/monitoreos)");
 
         process.on("SIGINT", async () => {
-            console.log("Cerrando servidor...");
+            console.log("Cerrando JOBS...");
             try { await redisClient.disconnect(); } catch { }
             try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
             process.exit();
@@ -203,6 +186,6 @@ function iniciarSchedulers() {
         process.on("unhandledRejection", (reason) => console.error("❌ unhandledRejection:", reason));
         process.on("uncaughtException", (err) => console.error("❌ uncaughtException:", err));
     } catch (err) {
-        console.error("❌ Error al iniciar el servidor:", err);
+        console.error("❌ Error al iniciar JOBS:", err);
     }
 })();
