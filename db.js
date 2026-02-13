@@ -124,8 +124,8 @@ async function initDWPool() {
     // ✅ Pool para CDC (capado para que no tumbe todo)
     dwPoolCdc = mysql.createPool({
         ...base,
-        connectionLimit: 2,
-        queueLimit: 200,
+        connectionLimit: 10,
+        queueLimit: 100,
     });
 
     // ✅ Pool para PENDIENTES (chico)
