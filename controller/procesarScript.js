@@ -47,8 +47,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-         ALTER TABLE clientes_cuentas_metodos_envios
-ADD COLUMN data LONGTEXT NULL;
+UPDATE clientes SET didDeposito = '1' WHERE superado=0 and elim=0;
 
 
         `;
@@ -58,8 +57,9 @@ ADD COLUMN data LONGTEXT NULL;
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
 
-            // Comparación correcta entre números
-            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
+
+
+            if (didOwner === 275 || didOwner === 276 || didOwner === 345 || didOwner === 223) continue;
 
             const conn = await getConnection(didOwner);
             try {
@@ -73,6 +73,64 @@ ADD COLUMN data LONGTEXT NULL;
         }
     } catch (err) {
         console.error("❌ Error general en corregirFechasHistorialTodasEmpresas:", err.message);
+    }
+}
+async function insertarDepositoCentralSiFalta_TodasEmpresas() {
+    try {
+        const empresaDataStr = await redisClient.get("empresasData");
+
+        if (!empresaDataStr) {
+            console.error("❌ No se encontró 'empresasData' en Redis.");
+            return;
+        }
+
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
+
+        const queryCountDepositos = `
+      SELECT COUNT(*) AS c
+      FROM depositos
+      WHERE superado = 0 AND elim = 0;
+    `;
+
+        const queryInsertCentral = `
+      INSERT INTO depositos
+        (id, did, ddiCliente, cod, nombre, direccion, calle, numero, localidad, provincia, pais,
+         latitud, longitud, email, propio, autofecha, quien, superado, elim)
+      VALUES
+        (NULL, '1', '0', 'cen', 'Central', '', '', '', '', '', '',
+         '', '', '', '0', CURRENT_TIMESTAMP, '', '0', '0');
+    `;
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+
+            // exclusions
+            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
+
+
+            const conn = await getConnection(didOwner);
+
+            try {
+                const rows = await executeQuery(conn, queryCountDepositos, []);
+                const count = Number(rows?.[0]?.c ?? 0);
+
+                if (count === 0) {
+                    await executeQuery(conn, queryInsertCentral, []);
+                    console.log(`✅ Empresa ${didOwner}: depositos vacía -> insertado 'Central'.`);
+                } else {
+                    console.log(`ℹ️ Empresa ${didOwner}: depositos tiene ${count} registros -> no se inserta.`);
+                }
+
+                await conn.release();
+            } catch (err) {
+                await conn.release();
+                console.error(`❌ Error en empresa ${didOwner}:`, err.message);
+            }
+        }
+    } catch (err) {
+        console.error("❌ Error general:", err.message);
     }
 }
 
@@ -151,7 +209,7 @@ async function listarEmpresasConCostoChofer() {
 
 
 async function main() {
-    await corregirFechasHistorialTodasEmpresas();
+    await insertarDepositoCentralSiFalta_TodasEmpresas();
 }
 
 main();

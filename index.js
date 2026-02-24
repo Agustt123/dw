@@ -161,7 +161,7 @@ async function startJobs() {
         const p = Promise.resolve().then(() => sincronizarEnviosUnaVez());
 
         // FIX CLAVE: NO hacemos await del promise original si se colgó
-        await withTimeout(p, 55 * 1000, "sincronizarEnviosUnaVez")
+        await withTimeout(p, 120 * 1000, "sincronizarEnviosUnaVez")
             .then((stats) => {
                 if (!stats) return;
                 const mins = (stats.elapsedMs || 1) / 60000;
