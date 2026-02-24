@@ -93,8 +93,8 @@ async function startJobs() {
 
         for (const didOwner of didOwners) {
             try {
-                await withTimeout(EnviarcdAsignacion(didOwner), 200000, `CDC asignacion ${didOwner}`);
-                await withTimeout(EnviarcdcEstado(didOwner), 200000, `CDC estado ${didOwner}`);
+                await withTimeout(EnviarcdAsignacion(didOwner), 500000, `CDC asignacion ${didOwner}`);
+                await withTimeout(EnviarcdcEstado(didOwner), 500000, `CDC estado ${didOwner}`);
             } catch (e) {
                 console.error(`❌ [JOBS] Error CDC empresa ${didOwner}:`, e?.message || e);
             }
