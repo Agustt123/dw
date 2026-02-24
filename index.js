@@ -187,7 +187,7 @@ async function startJobs() {
         setInterval(() => {
             runEnviosTick().catch(() => { });
             runCdcSafely().catch(() => { });
-        }, 120 * 1000);
+        }, 60 * 1000);
 
         // Pendientes cada 30s (antes estaba 15s)
         setInterval(() => {
