@@ -279,35 +279,28 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
         [lastIdEstados]
     );
 
-    // métricas
     metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
     metrics.porEmpresa[didOwner].estados += historialRows.length;
     metrics.estados += historialRows.length;
 
-    if (historialRows.length === 100) {
-        console.log(`[${didOwner}] ⚠️ estados: LIMIT 100 alcanzado (posible backlog)`);
-    }
-
     let lastProcessedId = 0;
 
     for (const hist of historialRows) {
-        // armamos row para DW (sin didEstado)
         const estadoDW = { ...hist, didOwner };
 
-        // filtrar solo columnas existentes en DW
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
+            if (k === "id") continue; // ✅ NO insertar id del origen
             if (columnasEstadosDW.includes(k)) estadoFiltrado[k] = v;
         }
 
-        // ✅ forzar didOwner si existe en la tabla (y evitar el warning)
         if (columnasEstadosDW.includes("didOwner")) {
             estadoFiltrado.didOwner = didOwner;
         }
 
         if (Object.keys(estadoFiltrado).length === 0) {
             console.log(`[${didOwner}] ⚠️ estadoFiltrado vacío. hist.id=${hist.id}`);
-            continue; // no insert, no avances max
+            continue;
         }
 
         const columnas = Object.keys(estadoFiltrado);
@@ -321,21 +314,14 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
 
         try {
             const res = await executeQuery(connDW, sql, valores, true);
-
-            // si tu executeQuery devuelve affectedRows, mejor:
             const affected = Number(res?.affectedRows ?? 1);
-            if (affected > 0) {
-                lastProcessedId = hist.id; // ✅ solo si insertó
-            } else {
-                console.log(`[${didOwner}] ⚠️ insert sin efecto. hist.id=${hist.id}`);
-            }
+            if (affected > 0) lastProcessedId = hist.id; // ✅ avanzar solo si insertó
         } catch (e) {
             console.error(`[${didOwner}] ❌ error insert estado. hist.id=${hist.id}`, e);
-            // ✅ NO avances el max
+            // ✅ no avances max
         }
     }
 
-    // ✅ Guardar puntero con UPSERT
     if (lastProcessedId > 0) {
         await executeQuery(
             connDW,
