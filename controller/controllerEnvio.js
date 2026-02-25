@@ -266,7 +266,6 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 }
 
 async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics) {
-    // 1) Leer puntero (si no existe, 0)
     const lastEstados = await executeQuery(
         connDW,
         "SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?",
@@ -274,7 +273,6 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     );
     const lastIdEstados = lastEstados.length ? Number(lastEstados[0].idMaxEstados) : 0;
 
-    // 2) Traer lote
     const historialRows = await executeQuery(
         connEmpresa,
         "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-01-28 00:00:00' ORDER BY id ASC LIMIT 100",
@@ -293,64 +291,51 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     let lastProcessedId = 0;
 
     for (const hist of historialRows) {
-        // 3) Identidad estable del registro del historial
-        //    IMPORTANTE: didEstado debe existir en la tabla DW (ALTER TABLE arriba)
-        const estadoDW = { ...hist, didEstado: hist.id, didOwner }; // <- uso hist.id, NO hist.did
+        // armamos row para DW (sin didEstado)
+        const estadoDW = { ...hist, didOwner };
 
-        // 4) Filtrar solo columnas que existen en DW
+        // filtrar solo columnas existentes en DW
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
             if (columnasEstadosDW.includes(k)) estadoFiltrado[k] = v;
         }
 
-        // Asegurar que siempre estén (si tu columnasEstadosDW lo permite)
-        // (si no están en columnasEstadosDW, este registro no se puede persistir correctamente)
-        if (!("didOwner" in estadoFiltrado) || !("didEstado" in estadoFiltrado)) {
-            console.log(`[${didOwner}] ⚠️ faltan columnas clave didOwner/didEstado. Se saltea hist.id=${hist.id}`);
-            continue;
+        // ✅ forzar didOwner si existe en la tabla (y evitar el warning)
+        if (columnasEstadosDW.includes("didOwner")) {
+            estadoFiltrado.didOwner = didOwner;
+        }
+
+        if (Object.keys(estadoFiltrado).length === 0) {
+            console.log(`[${didOwner}] ⚠️ estadoFiltrado vacío. hist.id=${hist.id}`);
+            continue; // no insert, no avances max
         }
 
         const columnas = Object.keys(estadoFiltrado);
         const valores = Object.values(estadoFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
 
-        // 5) UpdateSet: si queda vacío, usar INSERT IGNORE
-        const updateCols = columnas.filter(c => c !== "didEstado" && c !== "didOwner");
-        const updateSet = updateCols.map(c => `${c} = VALUES(${c})`).join(",");
+        const sql = `
+      INSERT INTO estado (${columnas.join(",")})
+      VALUES (${placeholders})
+    `;
 
-        const sql = updateSet
-            ? `
-        INSERT INTO estado (${columnas.join(",")})
-        VALUES (${placeholders})
-        ON DUPLICATE KEY UPDATE ${updateSet}
-      `
-            : `
-        INSERT IGNORE INTO estado (${columnas.join(",")})
-        VALUES (${placeholders})
-      `;
-
-        // 6) Ejecutar y solo avanzar puntero si tuvo efecto real
-        let res;
         try {
-            res = await executeQuery(connDW, sql, valores, true); // true si tu executeQuery devuelve OK packet
+            const res = await executeQuery(connDW, sql, valores, true);
+
+            // si tu executeQuery devuelve affectedRows, mejor:
+            const affected = Number(res?.affectedRows ?? 1);
+            if (affected > 0) {
+                lastProcessedId = hist.id; // ✅ solo si insertó
+            } else {
+                console.log(`[${didOwner}] ⚠️ insert sin efecto. hist.id=${hist.id}`);
+            }
         } catch (e) {
             console.error(`[${didOwner}] ❌ error insert estado. hist.id=${hist.id}`, e);
-            continue; // NO avances el max
+            // ✅ NO avances el max
         }
-
-        // Si tu executeQuery no devuelve affectedRows, al menos avanzamos solo si no hubo excepción.
-        // Ideal: exigir affectedRows.
-        const affected = Number(res?.affectedRows ?? 1);
-
-        if (affected <= 0) {
-            console.log(`[${didOwner}] ⚠️ insert/update sin efecto. hist.id=${hist.id}`);
-            continue; // NO avances el max
-        }
-
-        lastProcessedId = hist.id;
     }
 
-    // 7) Guardar puntero con UPSERT (no UPDATE)
+    // ✅ Guardar puntero con UPSERT
     if (lastProcessedId > 0) {
         await executeQuery(
             connDW,
