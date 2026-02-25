@@ -27,7 +27,8 @@ async function EnviarcdcEstado(didOwner) {
              e.autofecha,
              e.quien,
              e.didCadete,
-             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente
+             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente,
+             COALESCE(v_act.fecha_inicio, v_any.fecha_inicio) AS fecha_inicio
       FROM estado e
       LEFT JOIN envios v_act
         ON v_act.didOwner = e.didOwner
@@ -47,9 +48,9 @@ async function EnviarcdcEstado(didOwner) {
 
         const insertQuery = `
       INSERT IGNORE INTO cdc
-        (didOwner, didPaquete, ejecutar, estado, disparador, didCliente, fecha, didChofer, quien)
-      VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (didOwner, didPaquete, ejecutar, estado, disparador, didCliente, fecha, fecha_inicio, didChofer, quien)
+VALUES
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
         const updateQuery = `
@@ -61,7 +62,7 @@ async function EnviarcdcEstado(didOwner) {
         const disparador = "estado";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, estado, autofecha, quien, didCadete, didCliente } = row;
+            const { didOwner, didEnvio, estado, autofecha, quien, didCadete, didCliente, fecha_inicio } = row;
 
             // ✅ si el cliente es obligatorio, podés decidir qué hacer cuando falta:
             // - o "continue" para no marcar cdc (y reintentar más tarde)
@@ -76,6 +77,7 @@ async function EnviarcdcEstado(didOwner) {
                     disparador,
                     didCliente ?? null,
                     autofecha,
+                    fecha_inicio ?? null,
                     didCadete || 0,
                     quien || 0,
                 ]);

@@ -168,6 +168,9 @@ async function buildAprocesosEstado(rows, connection) {
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
+    const diaEvento = getDiaFromTS(row.fecha);
+    const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
+
     const envio = String(row.didPaquete);
     const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
 
@@ -214,9 +217,8 @@ async function buildAprocesosEstado(rows, connection) {
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
     // ✅ ANY: existió en el día (no depende del estado)
-    pushNodo(OW, 0, 0, ESTADO_ANY, dia, 1, envio);
-    pushNodo(OW, CLI, 0, ESTADO_ANY, dia, 1, envio);
-
+    pushNodo(OW, 0, 0, ESTADO_ANY, diaPaquete, 1, envio);
+    pushNodo(OW, CLI, 0, ESTADO_ANY, diaPaquete, 1, envio);
 
     // 69
     if (ESTADOS_69.has(EST)) {
