@@ -284,13 +284,15 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     metrics.estados += historialRows.length;
 
     let lastProcessedId = 0;
+    let inserted = 0;
+    let stoppedBy = null;
 
     for (const hist of historialRows) {
         const estadoDW = { ...hist, didOwner };
 
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
-            if (k === "id") continue; // ✅ NO insertar id del origen
+            if (k === "id") continue; // NO copiar id del origen
             if (columnasEstadosDW.includes(k)) estadoFiltrado[k] = v;
         }
 
@@ -298,9 +300,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
             estadoFiltrado.didOwner = didOwner;
         }
 
+        // Si queda vacío, NO es safe seguir (te genera huecos)
         if (Object.keys(estadoFiltrado).length === 0) {
-            console.log(`[${didOwner}] ⚠️ estadoFiltrado vacío. hist.id=${hist.id}`);
-            continue;
+            stoppedBy = `estadoFiltrado vacío (hist.id=${hist.id})`;
+            break;
         }
 
         const columnas = Object.keys(estadoFiltrado);
@@ -315,13 +318,21 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
         try {
             const res = await executeQuery(connDW, sql, valores, true);
             const affected = Number(res?.affectedRows ?? 1);
-            if (affected > 0) lastProcessedId = hist.id; // ✅ avanzar solo si insertó
+
+            if (affected <= 0) {
+                stoppedBy = `insert sin efecto (hist.id=${hist.id})`;
+                break;
+            }
+
+            inserted += 1;
+            lastProcessedId = hist.id; // ✅ avance contiguo
         } catch (e) {
-            console.error(`[${didOwner}] ❌ error insert estado. hist.id=${hist.id}`, e);
-            // ✅ no avances max
+            stoppedBy = `error insert (hist.id=${hist.id}) code=${e?.code || "?"} msg=${e?.sqlMessage || e?.message || "?"}`;
+            break; // ✅ CLAVE: no seguir, así no te salteás ids
         }
     }
 
+    // Solo actualizás el max si avanzaste algo contiguo
     if (lastProcessedId > 0) {
         await executeQuery(
             connDW,
@@ -333,6 +344,11 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
             [didOwner, lastProcessedId]
         );
     }
+
+    console.log(
+        `[${didOwner}] estados fetched=${historialRows.length} inserted=${inserted} lastIdAntes=${lastIdEstados} lastIdNuevo=${lastProcessedId || lastIdEstados}` +
+        (stoppedBy ? ` STOP: ${stoppedBy}` : "")
+    );
 }
 async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     const limitParaEliminar = 100;
