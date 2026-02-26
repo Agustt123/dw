@@ -205,11 +205,71 @@ async function listarEmpresasConCostoChofer() {
         console.error("❌ Error general en listarEmpresasConCostoChofer:", err.message);
     }
 }
+async function contarEnviosTodasEmpresas() {
+    try {
+        const empresaDataStr = await redisClient.get("empresasData");
 
+        if (!empresaDataStr) {
+            console.error("❌ No se encontró 'empresasData' en Redis.");
+            return;
+        }
+
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
+
+        const inicioDia = "2026-02-25 00:00:00";
+        const finDia = "2026-02-26 00:00:00";
+
+        const countQuery = `
+  SELECT COUNT(*) AS cantidad
+  FROM envios
+  WHERE fecha_inicio >= ?
+    AND fecha_inicio < ?
+    AND superado = 0
+`;
+
+        const exclusions = new Set([275, 276, 345]);
+
+        let totalGlobal = 0;
+        const resultados = [];
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+            if (exclusions.has(didOwner)) continue;
+
+            const conn = await getConnection(didOwner);
+
+            try {
+                const rows = await executeQuery(conn, countQuery, [inicioDia, finDia]);
+                const cantidad = Number(rows?.[0]?.cantidad ?? 0);
+                resultados.push({ didOwner, cantidad });
+                totalGlobal += cantidad;
+
+                console.log(`🏢 Empresa ${didOwner}: ${cantidad} envíos`);
+            } catch (err) {
+                console.error(`❌ Error contando envíos para empresa ${didOwner}:`, err.message);
+            } finally {
+                await conn.release();
+            }
+        }
+
+        console.log("====================================");
+        console.log(`✅ Total global envíos: ${totalGlobal}`);
+        console.log("✅ Top (primeros 20 por cantidad):");
+
+        resultados
+            .sort((a, b) => b.cantidad - a.cantidad)
+            .slice(0, 20)
+            .forEach(r => console.log(`- ${r.didOwner}: ${r.cantidad}`));
+    } catch (err) {
+        console.error("❌ Error general en contarEnviosTodasEmpresas:", err.message);
+    }
+}
 
 
 async function main() {
-    await insertarDepositoCentralSiFalta_TodasEmpresas();
+    await contarEnviosTodasEmpresas();
 }
 
 main();

@@ -108,7 +108,8 @@ async function EnviarcdAsignacion(didOwner) {
              a.operador,
              a.autofecha,
              a.estado,
-             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente
+             COALESCE(v_act.didCliente, v_any.didCliente) AS didCliente,
+             COALESCE(v_act.fecha_inicio, v_any.fecha_inicio) AS fecha_inicio
       FROM asignaciones a
       LEFT JOIN envios v_act
         ON v_act.didOwner = a.didOwner
@@ -128,9 +129,9 @@ async function EnviarcdAsignacion(didOwner) {
 
         const insertQuery = `
       INSERT IGNORE INTO cdc
-        (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente, estado)
+        (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente, estado, fecha_inicio)
       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
         const updateQuery = `
@@ -142,7 +143,7 @@ async function EnviarcdAsignacion(didOwner) {
         const disparador = "asignaciones";
 
         for (const row of rows) {
-            const { didOwner, didEnvio, operador, autofecha, estado, didCliente } = row;
+            const { didOwner, didEnvio, operador, autofecha, estado, didCliente, fecha_inicio } = row;
             const valorEstado = (estado !== undefined) ? estado : null;
 
             for (const ejecutar of ejecutadores) {
@@ -156,6 +157,7 @@ async function EnviarcdAsignacion(didOwner) {
                     disparador,
                     didCliente ?? null,
                     valorEstado,
+                    fecha_inicio ?? null,
                 ]);
             }
 
