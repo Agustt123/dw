@@ -274,8 +274,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const EST = nEstado(row.estado);
     const envio = String(row.didPaquete);
     if (!OW || EST === null) continue;
-
     const dia = getDiaFromTS(row.fecha);
+    const diaEvento = getDiaFromTS(row.fecha);
+    const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
+
 
     if (CHO !== 0) {
       // positivos por chofer
@@ -286,8 +288,8 @@ async function buildAprocesosAsignaciones(conn, rows) {
       pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
       pushNodo(OW, CLI, 0, EST, dia, 1, envio);
       // ✅ ANY: existió en el día
-      pushNodo(OW, 0, 0, ESTADO_ANY, dia, 1, envio);
-      pushNodo(OW, CLI, 0, ESTADO_ANY, dia, 1, envio);
+      pushNodo(OW, 0, 0, ESTADO_ANY, diaPaquete, 1, envio);
+      pushNodo(OW, CLI, 0, ESTADO_ANY, diaPaquete, 1, envio);
 
 
       if (ESTADOS_69.has(EST)) {
