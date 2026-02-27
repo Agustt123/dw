@@ -455,27 +455,13 @@ async function pendientesHoy() {
     const FETCH = 1000;
 
     const selectCDC = `
-      SELECT
-  c.id,
-  c.didOwner,
-  c.didPaquete,
-  c.didCliente,
-  c.didChofer,
-  c.quien,
-  c.estado,
-  c.disparador,
-  c.ejecutar,
-  c.fecha,
-  e.fecha_inicio
-FROM cdc c
-LEFT JOIN envios e
-  ON e.didOwner = c.didOwner
- AND e.didPaquete = c.didPaquete
-WHERE c.procesado = 0
-  AND (c.ejecutar = "estado" OR c.ejecutar = "asignaciones")
-  AND c.didCliente IS NOT NULL
-ORDER BY c.id ASC
-LIMIT ?
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
+      FROM cdc
+      WHERE procesado=0
+        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
+        AND didCliente IS NOT NULL
+      ORDER BY id ASC
+      LIMIT ?
     `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
