@@ -146,7 +146,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
 
     const enviosRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios WHERE id >  ?  AND autofecha > '2026-02-24 00:00:00' ORDER BY id ASC LIMIT 100",
+        "SELECT * FROM envios WHERE id >  ?  AND autofecha > '2026-02-27 00:00:00' ORDER BY id ASC LIMIT 100",
         [lastIdEnvios]
     );
 
@@ -275,7 +275,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
 
     const historialRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-02-24 00:00:00' ORDER BY id ASC LIMIT 100",
+        "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-02-27 00:00:00' ORDER BY id ASC LIMIT 100",
         [lastIdEstados]
     );
 
@@ -358,7 +358,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     const sistemaIngresosRows = await executeQuery(
         connEmpresa,
         `SELECT id, modulo, data FROM sistema_ingresos_activity
-     WHERE autofecha > '2026-02-24 00:00:00' AND id > ? AND modulo = 'eliminra_envio' ORDER BY id ASC LIMIT ?`,
+     WHERE autofecha > '2026-02-27 00:00:00' AND id > ? AND modulo = 'eliminra_envio' ORDER BY id ASC LIMIT ?`,
         [lastId, limitParaEliminar]
     );
 
