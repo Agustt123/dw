@@ -1,7 +1,7 @@
 const { executeQuery } = require("../../db");
 
 const ESTADO_ANY = 999;
-const ESTADO_ANY_EVENTO = 998; // paquetesEnMovimientosHoy
+const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
 function mesNombreES(fechaYYYYMMDD) {
   const MESES = [
     "Enero",
