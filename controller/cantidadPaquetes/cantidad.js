@@ -1,6 +1,7 @@
 const { executeQuery } = require("../../db");
 
 const ESTADO_ANY = 999;
+const ESTADO_ANY_EVENTO = 998; // paquetesEnMovimientosHoy
 function mesNombreES(fechaYYYYMMDD) {
   const MESES = [
     "Enero",
@@ -47,48 +48,69 @@ async function cantidadGlobalDia(conn, fecha) {
 }
 
 // ✅ Devuelve total del mes + total del día (para la fecha que mandes)
+
 async function cantidadGlobalMesYDia(conn, fecha) {
   const mesPrefix = String(fecha).slice(0, 7); // "YYYY-MM"
 
   const sql = `
     SELECT
+      -- HOY (999)
       SUM(CASE
-        WHEN dia = ? THEN
+        WHEN estado = ? AND dia = ? THEN
           CASE
             WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
             ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
           END
         ELSE 0
-      END) AS cantidadDia,
+      END) AS hoy,
 
+      -- MES (999)
       SUM(CASE
-        WHEN dia LIKE CONCAT(?, '%') THEN
+        WHEN estado = ? AND dia LIKE CONCAT(?, '%') THEN
           CASE
             WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
             ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
           END
         ELSE 0
-      END) AS cantidadMes
+      END) AS mes,
+
+      -- HOY MOVIMIENTO (998)
+      SUM(CASE
+        WHEN estado = ? AND dia = ? THEN
+          CASE
+            WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
+            ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
+          END
+        ELSE 0
+      END) AS hoyMovimiento
+
     FROM home_app
     WHERE didCliente = 0
       AND didChofer  = 0
-      AND estado     = ?;
   `;
 
-  const rows = await executeQuery(conn, sql, [fecha, mesPrefix, ESTADO_ANY], true);
+  const params = [
+    ESTADO_ANY, fecha,
+    ESTADO_ANY, mesPrefix,
+    ESTADO_MOV_HOY, fecha
+  ];
 
-  const cantidadDia = Number(rows?.[0]?.cantidadDia ?? 0);
-  const cantidadMes = Number(rows?.[0]?.cantidadMes ?? 0);
+  const rows = await executeQuery(conn, sql, params, true);
 
-  const nombre = mesNombreES(fecha); // ✅ "Febrero 2026"
+  const hoy = Number(rows?.[0]?.hoy ?? 0);
+  const mes = Number(rows?.[0]?.mes ?? 0);
+  const hoyMovimiento = Number(rows?.[0]?.hoyMovimiento ?? 0);
+
+  const nombre = mesNombreES(fecha);
 
   return {
     ok: true,
     fecha,
     mes: mesPrefix,
     nombre,
-    cantidadDia,
-    cantidadMes,
+    hoy,
+    mesCantidad: mes,
+    hoyMovimiento,
   };
 }
 
