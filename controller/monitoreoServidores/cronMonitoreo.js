@@ -66,7 +66,7 @@ async function obtenerMetricasUltimaCorrida() {
             ["conjunto"]
         );
 
-        return { did, rows };
+        return { rows };
     } catch (error) {
         console.error("❌ Error en obtenerMetricasUltimaCorrida:", error);
         throw {
