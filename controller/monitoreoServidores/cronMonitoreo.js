@@ -60,7 +60,7 @@ async function obtenerMetricasUltimaCorrida() {
         cpuProceso
       FROM sat_monitoreo_recursos
       WHERE 
-      and servidor = ?
+       servidor = ?
       ORDER BY id DESC LIMIT 1
       `,
             ["conjunto"]
