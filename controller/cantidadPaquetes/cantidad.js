@@ -51,6 +51,7 @@ async function cantidadGlobalDia(conn, fecha) {
 
 async function cantidadGlobalMesYDia(conn, fecha) {
   const mesPrefix = String(fecha).slice(0, 7); // "YYYY-MM"
+  const anioPrefix = "2026";                   // fijo
 
   const sql = `
     SELECT
@@ -74,6 +75,16 @@ async function cantidadGlobalMesYDia(conn, fecha) {
         ELSE 0
       END) AS mes,
 
+      -- AÑO 2026 (999)  ✅ NUEVO
+      SUM(CASE
+        WHEN estado = ? AND dia LIKE CONCAT(?, '-%') THEN
+          CASE
+            WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
+            ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
+          END
+        ELSE 0
+      END) AS anio,
+
       -- HOY MOVIMIENTO (998)
       SUM(CASE
         WHEN estado = ? AND dia = ? THEN
@@ -90,15 +101,17 @@ async function cantidadGlobalMesYDia(conn, fecha) {
   `;
 
   const params = [
-    ESTADO_ANY, fecha,
-    ESTADO_ANY, mesPrefix,
-    ESTADO_MOV_HOY, fecha
+    ESTADO_ANY, fecha,        // hoy
+    ESTADO_ANY, mesPrefix,    // mes
+    ESTADO_ANY, anioPrefix,   // añoCantidad (2026)
+    ESTADO_MOV_HOY, fecha     // hoyMovimiento
   ];
 
   const rows = await executeQuery(conn, sql, params, true);
 
   const hoy = Number(rows?.[0]?.hoy ?? 0);
   const mes = Number(rows?.[0]?.mes ?? 0);
+  const anioCantidad = Number(rows?.[0]?.anio ?? 0);
   const hoyMovimiento = Number(rows?.[0]?.hoyMovimiento ?? 0);
 
   const nombre = mesNombreES(fecha);
@@ -111,8 +124,8 @@ async function cantidadGlobalMesYDia(conn, fecha) {
     hoy,
     mesCantidad: mes,
     hoyMovimiento,
+    añoCantidad: anioCantidad, // ✅ NUEVO
   };
 }
-
 
 module.exports = { cantidadGlobalDia, cantidadGlobalMesYDia };
