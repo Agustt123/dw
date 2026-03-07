@@ -1,25 +1,15 @@
-// index.js
-// Modo backfill / toma historica
-// - API corre en proceso principal
-// - JOBS corren en child process
-// - Si se pasa --backfill, corre una sola toma historica y termina
-// - Sin schedulers, sin pendientes, sin monitoreo
-// - CDC con concurrencia controlada
-// - BACKFILL: envios y cdc corren en paralelo
-
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const { fork } = require("child_process");
 
-const isJobsChild = process.argv.includes("--jobs-child");
-const isBackfill = process.argv.includes("--backfill");
+const isBackfillOnly = process.argv.includes("--backfill-only");
 
 const PORT = 13000;
 
-// Timeouts especiales para historico
-const ENVIO_TIMEOUT = isBackfill ? 30 * 60 * 1000 : 200 * 1000;
-const CDC_TIMEOUT = isBackfill ? 15 * 60 * 1000 : 500 * 1000;
+// Timeouts
+const ENVIO_TIMEOUT = 30 * 60 * 1000;
+const CDC_TIMEOUT = 15 * 60 * 1000;
+const PENDIENTES_TIMEOUT = 60 * 60 * 1000;
 const CDC_CONCURRENCY = parseInt(process.env.CDC_CONCURRENCY || "3", 10);
 
 // =========================
@@ -47,7 +37,7 @@ function startApi() {
     app.get("/ping", (req, res) => res.status(200).json({ estado: true, mensaje: "OK" }));
     app.get("/healthz", (req, res) => res.status(200).json({
         ok: true,
-        mode: isBackfill ? "backfill" : "normal",
+        mode: isBackfillOnly ? "backfill-only" : "api+jobs",
         ts: Date.now()
     }));
 
@@ -87,17 +77,46 @@ async function runWithConcurrency(items, limit, worker) {
 }
 
 // =========================
-// JOBS
+// Jobs
 // =========================
-async function startJobs() {
-    const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
+async function buildJobsContext() {
+    const db = require("./db.js");
     const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
     const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
     const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
 
+    return {
+        ...db,
+        sincronizarEnviosUnaVez,
+        EnviarcdAsignacion,
+        EnviarcdcEstado,
+        pendientesHoy,
+        startMonitoreoJob,
+        startMonitoreoMetricas
+    };
+}
+
+async function main() {
+    const {
+        redisClient,
+        getFromRedis,
+        closeDWPool,
+        sincronizarEnviosUnaVez,
+        EnviarcdAsignacion,
+        EnviarcdcEstado,
+        pendientesHoy,
+        startMonitoreoJob,
+        startMonitoreoMetricas
+    } = await buildJobsContext();
+
     let empresasDB = null;
+    let backfillRunning = false;
+    let runningEnvios = false;
+    let runningCdc = false;
+    let cdcPending = false;
+    let runningPend = false;
 
     async function actualizarEmpresas() {
         try {
@@ -151,37 +170,32 @@ async function startJobs() {
         }
     }
 
-    async function correrCdcBackfill() {
+    async function correrCdcUnaVez() {
         await actualizarEmpresas();
         const didOwners = obtenerDidOwners();
 
         if (!didOwners.length) {
-            console.log("⚠️ [BACKFILL] No se encontraron empresas para CDC.");
+            console.log("⚠️ [CDC] No se encontraron empresas.");
             return;
         }
 
-        console.log(
-            `🚀 [BACKFILL] CDC historico para ${didOwners.length} empresas con concurrency=${CDC_CONCURRENCY}`
-        );
-
+        console.log(`🚀 [CDC] Procesando ${didOwners.length} empresas con concurrency=${CDC_CONCURRENCY}`);
         const startedAt = Date.now();
 
         await runWithConcurrency(didOwners, CDC_CONCURRENCY, procesarEmpresaCdc);
 
         const elapsedMs = Date.now() - startedAt;
-        console.log(`✅ [BACKFILL] CDC finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
+        console.log(`✅ [CDC] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
     }
 
-    async function runEnviosBackfill() {
-        console.log("🚀 [BACKFILL] Envios: iniciando sincronizacion historica...");
+    async function runEnviosUnaVez() {
+        console.log("🚀 [ENVIOS] Iniciando sincronizacion...");
 
         const startedAt = Date.now();
 
         try {
-            const p = Promise.resolve().then(() => sincronizarEnviosUnaVez());
-
             const stats = await withTimeout(
-                p,
+                Promise.resolve().then(() => sincronizarEnviosUnaVez()),
                 ENVIO_TIMEOUT,
                 "sincronizarEnviosUnaVez"
             );
@@ -189,7 +203,7 @@ async function startJobs() {
             const elapsedMs = Date.now() - startedAt;
 
             if (!stats) {
-                console.log(`✅ [BACKFILL] Envios finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
+                console.log(`✅ [ENVIOS] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
                 return;
             }
 
@@ -197,262 +211,202 @@ async function startJobs() {
             const enviosMin = Number((stats.envios / mins).toFixed(1));
 
             console.log(
-                `✅ [BACKFILL] Envios completado — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${((stats.elapsedMs || elapsedMs) / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
+                `✅ [ENVIOS] Completado — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${((stats.elapsedMs || elapsedMs) / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
             );
         } catch (e) {
-            console.error("❌ [BACKFILL] Error en envios historicos:", e?.message || e);
+            console.error("❌ [ENVIOS] Error:", e?.message || e);
         }
     }
 
-    async function runBackfill() {
-        console.log("========================================");
-        console.log("🚀 [BACKFILL] Iniciando toma historica");
-        console.log(`🧩 [BACKFILL] ENVIO_TIMEOUT=${ENVIO_TIMEOUT}ms`);
-        console.log(`🧩 [BACKFILL] CDC_TIMEOUT=${CDC_TIMEOUT}ms`);
-        console.log(`🧩 [BACKFILL] CDC_CONCURRENCY=${CDC_CONCURRENCY}`);
-        console.log("🧩 [BACKFILL] Modo paralelo: ENVIOS + CDC");
-        console.log("========================================");
+    async function runPendientesUnaVez() {
+        console.log("🚀 [PENDIENTES] Iniciando pendientesHoy...");
 
-        const globalStart = Date.now();
+        const startedAt = Date.now();
 
-        await actualizarEmpresas();
+        try {
+            const result = await withTimeout(
+                Promise.resolve().then(() => pendientesHoy()),
+                PENDIENTES_TIMEOUT,
+                "pendientesHoy"
+            );
 
-        await Promise.all([
-            runEnviosBackfill(),
-            correrCdcBackfill()
-        ]);
-
-        const elapsedMs = Date.now() - globalStart;
-        console.log(`✅ [BACKFILL] Toma historica completa en ${(elapsedMs / 1000).toFixed(1)}s`);
+            const elapsedMs = Date.now() - startedAt;
+            console.log(`✅ [PENDIENTES] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`, result || "");
+        } catch (e) {
+            console.error("❌ [PENDIENTES] Error:", e?.message || e);
+        }
     }
 
-    async function startNormalMode() {
-        let runningEnvios = false;
-        let runningCdc = false;
-        let cdcPending = false;
-        let runningPend = false;
-
-        async function correrCdcUnaVez() {
-            await actualizarEmpresas();
-            const didOwners = obtenerDidOwners();
-
-            if (!didOwners.length) {
-                console.log("⚠️ [JOBS] No se encontraron empresas para CDC.");
-                return;
-            }
-
-            console.log(`🔁 [JOBS] CDC para ${didOwners.length} empresas...`);
-
-            for (const didOwner of didOwners) {
-                try {
-                    await withTimeout(
-                        Promise.resolve().then(() => EnviarcdAsignacion(didOwner)),
-                        CDC_TIMEOUT,
-                        `CDC asignacion ${didOwner}`
-                    );
-
-                    await withTimeout(
-                        Promise.resolve().then(() => EnviarcdcEstado(didOwner)),
-                        CDC_TIMEOUT,
-                        `CDC estado ${didOwner}`
-                    );
-                } catch (e) {
-                    console.error(`❌ [JOBS] Error CDC empresa ${didOwner}:`, e?.message || e);
-                }
-            }
-        }
-
-        async function runCdcSafely() {
-            if (runningCdc) {
-                cdcPending = true;
-                return;
-            }
-
-            if (runningEnvios) {
-                cdcPending = true;
-                return;
-            }
-
-            runningCdc = true;
-
-            try {
-                do {
-                    cdcPending = false;
-                    console.log("🔁 [JOBS] CDC: iniciando...");
-                    await correrCdcUnaVez();
-                    console.log("✅ [JOBS] CDC: completado");
-
-                    if (runningEnvios) {
-                        cdcPending = true;
-                        break;
-                    }
-                } while (cdcPending);
-            } catch (e) {
-                console.error("❌ [JOBS] Error en CDC:", e?.message || e);
-            } finally {
-                runningCdc = false;
-            }
-        }
-
-        async function runPendientesFixed() {
-            if (runningPend) {
-                console.log("⏭️ [JOBS] pendientesHoy sigue corriendo, salteo tick");
-                return;
-            }
-
-            runningPend = true;
-
-            try {
-                await withTimeout(
-                    Promise.resolve().then(() => pendientesHoy()),
-                    25000,
-                    "pendientesHoy"
-                );
-            } catch (e) {
-                console.error("❌ [JOBS] Error en pendientesHoy:", e?.message || e);
-            } finally {
-                runningPend = false;
-            }
-        }
-
-        async function runEnviosTick() {
-            if (runningEnvios) {
-                console.log("⏭️ [JOBS] Envios sigue corriendo, no arranco otro");
-                return;
-            }
-
-            runningEnvios = true;
-            console.log("🔁 [JOBS] Envios: iniciando sincronizacion...");
-
-            try {
-                const p = Promise.resolve().then(() => sincronizarEnviosUnaVez());
-
-                const stats = await withTimeout(
-                    p,
-                    200 * 1000,
-                    "sincronizarEnviosUnaVez"
-                );
-
-                if (stats) {
-                    const mins = (stats.elapsedMs || 1) / 60000;
-                    const enviosMin = (stats.envios / mins).toFixed(1);
-
-                    console.log(
-                        `✅ [JOBS] Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${(stats.elapsedMs / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
-                    );
-                }
-            } catch (e) {
-                console.error("⏱️ [JOBS] Envios timeout/error:", e?.message || e);
-            } finally {
-                runningEnvios = false;
-            }
-
-            if (cdcPending) {
-                runCdcSafely().catch(() => { });
-            }
-        }
-
-        function iniciarSchedulers() {
-            setInterval(() => {
-                runEnviosTick().catch(() => { });
-                runCdcSafely().catch(() => { });
-            }, 60 * 1000);
-
-            setInterval(() => {
-                runPendientesFixed().catch(() => { });
-            }, 30 * 1000);
-        }
-
-        console.log("✅ [JOBS] Iniciando jobs en modo normal...");
-        await actualizarEmpresas();
-
-        iniciarSchedulers();
-        startMonitoreoJob();
-        startMonitoreoMetricas();
-    }
-
-    console.log(`✅ [JOBS] Iniciando jobs en modo ${isBackfill ? "BACKFILL" : "NORMAL"}...`);
-
-    if (isBackfill) {
-        await runBackfill();
-
-        console.log("🛑 [BACKFILL] Finalizado. Cerrando proceso de jobs...");
-        try { await redisClient.disconnect(); } catch { }
-        try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
-        process.exit(0);
-        return;
-    }
-
-    await startNormalMode();
-
-    process.on("SIGINT", async () => {
-        console.log("🛑 [JOBS] Cerrando...");
-        try { await redisClient.disconnect(); } catch { }
-        try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
-        process.exit(0);
-    });
-
-    process.on("unhandledRejection", (reason) => {
-        console.error("❌ [JOBS] unhandledRejection:", reason);
-    });
-
-    process.on("uncaughtException", (err) => {
-        console.error("❌ [JOBS] uncaughtException:", err);
-    });
-}
-
-// =========================
-// Bootstrap
-// =========================
-(async () => {
-    try {
-        if (isJobsChild) {
-            await startJobs();
+    async function runBackfillUnaVez() {
+        if (backfillRunning) {
+            console.log("⏭️ [BACKFILL] Ya está corriendo, salteo.");
             return;
         }
 
-        startApi();
+        backfillRunning = true;
 
-        const childArgs = ["--jobs-child"];
-        if (isBackfill) childArgs.push("--backfill");
+        try {
+            console.log("========================================");
+            console.log("🚀 [BACKFILL] Iniciando llenado histórico");
+            console.log(`🧩 [BACKFILL] ENVIO_TIMEOUT=${ENVIO_TIMEOUT}ms`);
+            console.log(`🧩 [BACKFILL] CDC_TIMEOUT=${CDC_TIMEOUT}ms`);
+            console.log(`🧩 [BACKFILL] PENDIENTES_TIMEOUT=${PENDIENTES_TIMEOUT}ms`);
+            console.log(`🧩 [BACKFILL] CDC_CONCURRENCY=${CDC_CONCURRENCY}`);
+            console.log("🧩 [BACKFILL] Orden: ENVIOS -> CDC -> PENDIENTES");
+            console.log("========================================");
 
-        let child = fork(__filename, childArgs, {
-            stdio: "inherit",
-            env: process.env,
-        });
+            const startedAt = Date.now();
 
-        child.on("exit", (code, signal) => {
-            console.error(`❌ [JOBS] Proceso hijo termino (code=${code}, signal=${signal})`);
+            await runEnviosUnaVez();
+            await correrCdcUnaVez();
+            await runPendientesUnaVez();
 
-            if (isBackfill) {
-                console.log("✅ [BACKFILL] Child finalizado, no se reinicia.");
-                return;
-            }
-
-            console.error("🔁 [JOBS] Lo reinicio en 2s...");
-            setTimeout(() => {
-                child = fork(__filename, ["--jobs-child"], {
-                    stdio: "inherit",
-                    env: process.env,
-                });
-            }, 2000);
-        });
-
-        process.on("SIGINT", () => {
-            console.log("🛑 [API] Cerrando...");
-            try { child.kill("SIGINT"); } catch { }
-            process.exit(0);
-        });
-
-        process.on("unhandledRejection", (reason) => {
-            console.error("❌ [API] unhandledRejection:", reason);
-        });
-
-        process.on("uncaughtException", (err) => {
-            console.error("❌ [API] uncaughtException:", err);
-        });
-    } catch (err) {
-        console.error("❌ Error al iniciar:", err?.message || err);
-        process.exit(1);
+            const elapsedMs = Date.now() - startedAt;
+            console.log(`✅ [BACKFILL] Completo en ${(elapsedMs / 1000).toFixed(1)}s`);
+        } catch (e) {
+            console.error("❌ [BACKFILL] Error:", e?.message || e);
+        } finally {
+            backfillRunning = false;
+        }
     }
-})();
+
+    async function runCdcSafely() {
+        if (runningCdc || runningEnvios || backfillRunning) {
+            cdcPending = true;
+            return;
+        }
+
+        runningCdc = true;
+
+        try {
+            do {
+                cdcPending = false;
+                console.log("🔁 [JOBS] CDC: iniciando...");
+                await correrCdcUnaVez();
+                console.log("✅ [JOBS] CDC: completado");
+
+                if (runningEnvios || backfillRunning) {
+                    cdcPending = true;
+                    break;
+                }
+            } while (cdcPending);
+        } catch (e) {
+            console.error("❌ [JOBS] Error en CDC:", e?.message || e);
+        } finally {
+            runningCdc = false;
+        }
+    }
+
+    async function runPendientesFixed() {
+        if (runningPend || backfillRunning) {
+            console.log("⏭️ [JOBS] pendientesHoy sigue corriendo o backfill activo, salteo tick");
+            return;
+        }
+
+        runningPend = true;
+
+        try {
+            await withTimeout(
+                Promise.resolve().then(() => pendientesHoy()),
+                25000,
+                "pendientesHoy"
+            );
+        } catch (e) {
+            console.error("❌ [JOBS] Error en pendientesHoy:", e?.message || e);
+        } finally {
+            runningPend = false;
+        }
+    }
+
+    async function runEnviosTick() {
+        if (runningEnvios || backfillRunning) {
+            console.log("⏭️ [JOBS] Envios sigue corriendo o backfill activo, no arranco otro");
+            return;
+        }
+
+        runningEnvios = true;
+        console.log("🔁 [JOBS] Envios: iniciando sincronizacion...");
+
+        try {
+            const stats = await withTimeout(
+                Promise.resolve().then(() => sincronizarEnviosUnaVez()),
+                200 * 1000,
+                "sincronizarEnviosUnaVez"
+            );
+
+            if (stats) {
+                const mins = Math.max((stats.elapsedMs || 1) / 60000, 1 / 60000);
+                const enviosMin = (stats.envios / mins).toFixed(1);
+
+                console.log(
+                    `✅ [JOBS] Envios: completada — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${((stats.elapsedMs || 0) / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
+                );
+            }
+        } catch (e) {
+            console.error("⏱️ [JOBS] Envios timeout/error:", e?.message || e);
+        } finally {
+            runningEnvios = false;
+        }
+
+        if (cdcPending) {
+            runCdcSafely().catch(() => { });
+        }
+    }
+
+    function iniciarSchedulers() {
+        setInterval(() => {
+            runEnviosTick().catch(() => { });
+            runCdcSafely().catch(() => { });
+        }, 60 * 1000);
+
+        setInterval(() => {
+            runPendientesFixed().catch(() => { });
+        }, 30 * 1000);
+    }
+
+    async function shutdown() {
+        console.log("🛑 Cerrando proceso...");
+        try { await redisClient.disconnect(); } catch { }
+        try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
+        process.exit(0);
+    }
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    process.on("unhandledRejection", (reason) => {
+        console.error("❌ unhandledRejection:", reason);
+    });
+
+    process.on("uncaughtException", (err) => {
+        console.error("❌ uncaughtException:", err);
+    });
+
+    if (isBackfillOnly) {
+        await runBackfillUnaVez();
+        await shutdown();
+        return;
+    }
+
+    startApi();
+
+    console.log("✅ [APP] Iniciando modo API + jobs + backfill inicial");
+    await actualizarEmpresas();
+
+    // Arranca el backfill una sola vez, sin bloquear el proceso de API
+    setTimeout(() => {
+        runBackfillUnaVez().catch((e) => {
+            console.error("❌ [BACKFILL] Falló al iniciar:", e?.message || e);
+        });
+    }, 2000);
+
+    // Jobs normales
+    iniciarSchedulers();
+    startMonitoreoJob();
+    startMonitoreoMetricas();
+}
+
+main().catch((err) => {
+    console.error("❌ Error fatal al iniciar:", err?.message || err);
+    process.exit(1);
+});
