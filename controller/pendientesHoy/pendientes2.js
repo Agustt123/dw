@@ -455,7 +455,7 @@ async function pendientesHoy() {
   let fatalErr = null;
 
   try {
-    const FETCH = 1000;
+    const FETCH = 10000;
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
