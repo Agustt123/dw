@@ -127,7 +127,7 @@ async function EnviarcdAsignacion(didOwner) {
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
         if (rows.length === 0) return;
 
-        const insertQuery = `S
+        const insertQuery = `
       INSERT IGNORE INTO cdc
         (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente, estado, fecha_inicio)
       VALUES
