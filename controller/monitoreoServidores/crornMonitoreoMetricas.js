@@ -12,7 +12,7 @@ function startMonitoreoMetricas() {
         const db = await getConnectionLocalCdc();
         try {
             const r = await monitoreoRecursos(db);
-            console.log("[MONITOREO JOB] ok:", r);
+            //   console.log("[MONITOREO JOB] ok:", r);
         } catch (err) {
             console.error("[MONITOREO JOB] error:", err.message);
         } finally {

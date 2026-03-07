@@ -117,6 +117,7 @@ async function main() {
     let runningCdc = false;
     let cdcPending = false;
     let runningPend = false;
+    let pendientesLoopStarted = false;
 
     async function actualizarEmpresas() {
         try {
@@ -218,23 +219,57 @@ async function main() {
         }
     }
 
-    async function runPendientesUnaVez() {
-        console.log("🚀 [PENDIENTES] Iniciando pendientesHoy...");
+    async function runPendientesFixed() {
+        if (runningPend) {
+            console.log("⏭️ [JOBS] pendientesHoy sigue corriendo, salteo tick");
+            return;
+        }
 
-        const startedAt = Date.now();
+        runningPend = true;
 
         try {
-            const result = await withTimeout(
+            await withTimeout(
                 Promise.resolve().then(() => pendientesHoy()),
                 PENDIENTES_TIMEOUT,
                 "pendientesHoy"
             );
-
-            const elapsedMs = Date.now() - startedAt;
-            console.log(`✅ [PENDIENTES] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`, result || "");
         } catch (e) {
-            console.error("❌ [PENDIENTES] Error:", e?.message || e);
+            console.error("❌ [JOBS] Error en pendientesHoy:", e?.message || e);
+        } finally {
+            runningPend = false;
         }
+    }
+
+    function startPendientesLoop() {
+        if (pendientesLoopStarted) {
+            console.log("⏭️ [PENDIENTES_LOOP] Ya estaba iniciado");
+            return;
+        }
+
+        pendientesLoopStarted = true;
+
+        (async function loopPendientes() {
+            console.log("🚀 [PENDIENTES_LOOP] Iniciado");
+
+            while (true) {
+                try {
+                    const startedAt = Date.now();
+                    console.log("🔁 [PENDIENTES_LOOP] Ejecutando pendientesHoy...");
+
+                    await runPendientesFixed();
+
+                    const elapsedMs = Date.now() - startedAt;
+                    console.log(`✅ [PENDIENTES_LOOP] Vuelta completada en ${(elapsedMs / 1000).toFixed(1)}s`);
+                } catch (e) {
+                    console.error("❌ [PENDIENTES_LOOP] Error en loop:", e?.message || e);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        })().catch((e) => {
+            console.error("❌ [PENDIENTES_LOOP] Fallo fatal:", e?.message || e);
+            pendientesLoopStarted = false;
+        });
     }
 
     async function runBackfillUnaVez() {
@@ -259,7 +294,7 @@ async function main() {
 
             await runEnviosUnaVez();
             await correrCdcUnaVez();
-            await runPendientesUnaVez();
+            await runPendientesFixed();
 
             const elapsedMs = Date.now() - startedAt;
             console.log(`✅ [BACKFILL] Completo en ${(elapsedMs / 1000).toFixed(1)}s`);
@@ -294,27 +329,6 @@ async function main() {
             console.error("❌ [JOBS] Error en CDC:", e?.message || e);
         } finally {
             runningCdc = false;
-        }
-    }
-
-    async function runPendientesFixed() {
-        if (runningPend || backfillRunning) {
-            console.log("⏭️ [JOBS] pendientesHoy sigue corriendo o backfill activo, salteo tick");
-            return;
-        }
-
-        runningPend = true;
-
-        try {
-            await withTimeout(
-                Promise.resolve().then(() => pendientesHoy()),
-                25000,
-                "pendientesHoy"
-            );
-        } catch (e) {
-            console.error("❌ [JOBS] Error en pendientesHoy:", e?.message || e);
-        } finally {
-            runningPend = false;
         }
     }
 
@@ -358,10 +372,6 @@ async function main() {
             runEnviosTick().catch(() => { });
             runCdcSafely().catch(() => { });
         }, 60 * 1000);
-
-        setInterval(() => {
-            runPendientesFixed().catch(() => { });
-        }, 30 * 1000);
     }
 
     async function shutdown() {
@@ -393,14 +403,17 @@ async function main() {
     console.log("✅ [APP] Iniciando modo API + jobs + backfill inicial");
     await actualizarEmpresas();
 
-    // Arranca el backfill una sola vez, sin bloquear el proceso de API
+    // pendientes en loop infinito, en paralelo
+    startPendientesLoop();
+
+    // backfill inicial una sola vez, sin bloquear la API
     setTimeout(() => {
         runBackfillUnaVez().catch((e) => {
             console.error("❌ [BACKFILL] Falló al iniciar:", e?.message || e);
         });
     }, 2000);
 
-    // Jobs normales
+    // jobs normales
     iniciarSchedulers();
     startMonitoreoJob();
     startMonitoreoMetricas();

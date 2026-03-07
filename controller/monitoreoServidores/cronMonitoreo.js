@@ -11,7 +11,7 @@ function startMonitoreoJob() {
         const db = await getConnectionLocalCdc();
         try {
             const r = await monitoreo(db);
-            console.log("[MONITOREO JOB] ok:", r);
+            //  console.log("[MONITOREO JOB] ok:", r);
         } catch (err) {
             console.error("[MONITOREO JOB] error:", err.message);
         } finally {
@@ -19,7 +19,7 @@ function startMonitoreoJob() {
         }
     });
 
-    console.log("[MONITOREO JOB] scheduler iniciado (cada 10 min)");
+    //console.log("[MONITOREO JOB] scheduler iniciado (cada 10 min)");
 }
 
 async function obtenerMetricasUltimaCorrida() {
