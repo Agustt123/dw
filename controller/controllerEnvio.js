@@ -102,10 +102,36 @@ async function sincronizarEnviosBatchParaEmpresa(
     try {
         connEmpresa = await getConnection(didOwner);
 
-        await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics);
-        await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics);
-        await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics);
-        await procesarEliminaciones(connEmpresa, connDW, didOwner, metrics);
+        let vuelta = 0;
+
+        while (true) {
+            vuelta++;
+
+            const enviosAntes = metrics.envios;
+            const asignacionesAntes = metrics.asignaciones;
+            const estadosAntes = metrics.estados;
+            const eliminacionesAntes = metrics.eliminaciones;
+
+            await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics);
+            await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics);
+            await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics);
+            await procesarEliminaciones(connEmpresa, connDW, didOwner, metrics);
+
+            const movEnvios = metrics.envios - enviosAntes;
+            const movAsignaciones = metrics.asignaciones - asignacionesAntes;
+            const movEstados = metrics.estados - estadosAntes;
+            const movEliminaciones = metrics.eliminaciones - eliminacionesAntes;
+
+            const totalMovido = movEnvios + movAsignaciones + movEstados + movEliminaciones;
+
+            console.log(
+                `[${didOwner}] vuelta ${vuelta} -> envios=${movEnvios}, asignaciones=${movAsignaciones}, estados=${movEstados}, eliminaciones=${movEliminaciones}, total=${totalMovido}`
+            );
+
+            if (totalMovido === 0) {
+                break;
+            }
+        }
 
         console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
     } catch (error) {
@@ -137,7 +163,6 @@ async function sincronizarEnviosBatchParaEmpresa(
         }
     }
 }
-
 // -------------------- Procesadores --------------------
 
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics) {
@@ -146,7 +171,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
 
     const enviosRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios WHERE id >  ?  AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 100",
+        "SELECT * FROM envios WHERE id >  ?  AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 5000",
         [lastIdEnvios]
     );
 
@@ -155,8 +180,8 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
     metrics.porEmpresa[didOwner].envios += enviosRows.length;
     metrics.envios += enviosRows.length;
 
-    if (enviosRows.length === 100) {
-        console.log(`[${didOwner}] ⚠️ envios: LIMIT 100 alcanzado (posible backlog)`);
+    if (enviosRows.length === 5000) {
+        console.log(`[${didOwner}] ⚠️ envios: LIMIT 5000 alcanzado (posible backlog)`);
     }
 
     let lastProcessedId = 0;
@@ -213,7 +238,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
 
     const asignacionesRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios_asignaciones WHERE autofecha > '2026-01-01 00:00:00'  AND id > ? ORDER BY id ASC LIMIT 100",
+        "SELECT * FROM envios_asignaciones WHERE autofecha > '2026-01-01 00:00:00'  AND id > ? ORDER BY id ASC LIMIT 5000",
         [lastIdAsignaciones]
     );
 
@@ -222,8 +247,8 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
     metrics.porEmpresa[didOwner].asignaciones += asignacionesRows.length;
     metrics.asignaciones += asignacionesRows.length;
 
-    if (asignacionesRows.length === 100) {
-        console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 100 alcanzado (posible backlog)`);
+    if (asignacionesRows.length === 5000) {
+        console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 5000 alcanzado (posible backlog)`);
     }
 
     let lastProcessedId = 0;
@@ -275,7 +300,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
 
     const historialRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 100",
+        "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 5000",
         [lastIdEstados]
     );
 
@@ -351,7 +376,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     );
 }
 async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
-    const limitParaEliminar = 100;
+    const limitParaEliminar = 5000;
     const last = await executeQuery(connDW, "SELECT idMaxSisIngActiElim FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
     const lastId = last.length ? last[0].idMaxSisIngActiElim : 0;
 
@@ -367,7 +392,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     metrics.porEmpresa[didOwner].eliminaciones += sistemaIngresosRows.length;
     metrics.eliminaciones += sistemaIngresosRows.length;
 
-    if (sistemaIngresosRows.length === 100) {
+    if (sistemaIngresosRows.length === 5000) {
         console.log(`[${didOwner}] ⚠️ eliminaciones: LIMIT alcanzado (posible backlog)`);
     }
 
