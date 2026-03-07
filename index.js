@@ -5,6 +5,7 @@
 // - Si se pasa --backfill, corre una sola toma historica y termina
 // - Sin schedulers, sin pendientes, sin monitoreo
 // - CDC con concurrencia controlada
+// - BACKFILL: envios y cdc corren en paralelo
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -17,8 +18,8 @@ const isBackfill = process.argv.includes("--backfill");
 const PORT = 13000;
 
 // Timeouts especiales para historico
-const ENVIO_TIMEOUT = isBackfill ? 30 * 60 * 1000 : 200 * 1000; // 30 min en historico
-const CDC_TIMEOUT = isBackfill ? 15 * 60 * 1000 : 500 * 1000;   // 15 min por tarea CDC
+const ENVIO_TIMEOUT = isBackfill ? 30 * 60 * 1000 : 200 * 1000;
+const CDC_TIMEOUT = isBackfill ? 15 * 60 * 1000 : 500 * 1000;
 const CDC_CONCURRENCY = parseInt(process.env.CDC_CONCURRENCY || "3", 10);
 
 // =========================
@@ -209,17 +210,17 @@ async function startJobs() {
         console.log(`🧩 [BACKFILL] ENVIO_TIMEOUT=${ENVIO_TIMEOUT}ms`);
         console.log(`🧩 [BACKFILL] CDC_TIMEOUT=${CDC_TIMEOUT}ms`);
         console.log(`🧩 [BACKFILL] CDC_CONCURRENCY=${CDC_CONCURRENCY}`);
+        console.log("🧩 [BACKFILL] Modo paralelo: ENVIOS + CDC");
         console.log("========================================");
 
         const globalStart = Date.now();
 
         await actualizarEmpresas();
 
-        // 1. Primero envios
-        await runEnviosBackfill();
-
-        // 2. Despues CDC
-        await correrCdcBackfill();
+        await Promise.all([
+            runEnviosBackfill(),
+            correrCdcBackfill()
+        ]);
 
         const elapsedMs = Date.now() - globalStart;
         console.log(`✅ [BACKFILL] Toma historica completa en ${(elapsedMs / 1000).toFixed(1)}s`);
@@ -423,7 +424,6 @@ async function startJobs() {
         child.on("exit", (code, signal) => {
             console.error(`❌ [JOBS] Proceso hijo termino (code=${code}, signal=${signal})`);
 
-            // En historico NO reiniciar automaticamente
             if (isBackfill) {
                 console.log("✅ [BACKFILL] Child finalizado, no se reinicia.");
                 return;
@@ -455,4 +455,4 @@ async function startJobs() {
         console.error("❌ Error al iniciar:", err?.message || err);
         process.exit(1);
     }
-})();//
+})();
