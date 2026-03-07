@@ -40,7 +40,7 @@ async function EnviarcdcEstado(didOwner) {
        AND v_any.didEnvio = e.didEnvio
       WHERE e.cdc = 0
         AND e.didOwner = ?
-      LIMIT 500
+      LIMIT 100000
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
@@ -121,13 +121,13 @@ async function EnviarcdAsignacion(didOwner) {
        AND v_any.didEnvio = a.didEnvio
       WHERE a.cdc = 0
         AND a.didOwner = ?
-      LIMIT 500
+      LIMIT 100000
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
         if (rows.length === 0) return;
 
-        const insertQuery = `
+        const insertQuery = `S
       INSERT IGNORE INTO cdc
         (didOwner, didPaquete, ejecutar, didChofer, fecha, disparador, didCliente, estado, fecha_inicio)
       VALUES
