@@ -6,16 +6,24 @@ const idsProcesados = [];
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
-const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
-const ESTADO_ANY_EVENTO = 998
+const ESTADO_ANY = 999; // existió en el día según fecha_inicio
+const ESTADO_ANY_EVENTO = 998; // existió en el día del evento
 
 const TZ = "America/Argentina/Buenos_Aires";
+const FETCH = 5000;
+const LOOKUP_CHUNK = 500;
 
+let PENDIENTES_HOY_RUNNING = false;
+
+// ----------------- Utils -----------------
 function getDiaFromTS(ts) {
   const d = new Date(ts);
-  const ok = isNaN(d.getTime()) ? new Date() : d;
+  const ok = Number.isNaN(d.getTime()) ? new Date() : d;
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit"
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   }).format(ok);
 }
 
@@ -24,7 +32,90 @@ const nEstado = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ----------------- Cache en memoria (GLOBAL) -----------------
+function ensure(o, k) {
+  return (o[k] ??= {});
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function pairKey(owner, envio) {
+  return `${owner}|${envio}`;
+}
+
+function normalizeEnvio(v) {
+  return String(v);
+}
+
+function uniquePairs(rows, envioField = "didPaquete") {
+  const map = new Map();
+
+  for (const row of rows) {
+    const owner = Number(row.didOwner);
+    const envio = normalizeEnvio(row[envioField]);
+    if (!owner || !envio) continue;
+    map.set(pairKey(owner, envio), { owner, envio });
+  }
+
+  return Array.from(map.values());
+}
+
+function groupPairsByOwner(pairs) {
+  const grouped = new Map();
+
+  for (const p of pairs) {
+    if (!grouped.has(p.owner)) grouped.set(p.owner, []);
+    grouped.get(p.owner).push(p.envio);
+  }
+
+  return grouped;
+}
+
+function buildOwnerEnvioWhere(grouped, ownerField, envioField) {
+  const parts = [];
+  const params = [];
+
+  for (const [owner, envios] of grouped.entries()) {
+    if (!envios.length) continue;
+
+    parts.push(
+      `(${ownerField} = ? AND ${envioField} IN (${envios.map(() => "?").join(",")}))`
+    );
+    params.push(owner, ...envios);
+  }
+
+  if (!parts.length) {
+    return { sql: "1=0", params: [] };
+  }
+
+  return {
+    sql: parts.join(" OR "),
+    params,
+  };
+}
+
+function buildCurrentStateFromEstadoRow(row) {
+  const estado = nEstado(row.estado);
+  const dia = getDiaFromTS(row.fecha);
+  const chofer = estado === 0 ? (Number(row.quien) || 0) : (Number(row.didChofer) || 0);
+  const cliente = Number(row.didCliente) || 0;
+
+  return {
+    estado,
+    didChofer: chofer,
+    didCliente: cliente,
+    dia,
+  };
+}
+
+// ----------------- Cache en memoria por lote -----------------
 // key: "owner|cliente|chofer|estado|dia"
 const homeAppCache = new Map();
 
@@ -34,7 +125,9 @@ const makeKey = (owner, cliente, chofer, estado, dia) =>
 function parseCSVToSet(s) {
   const set = new Set();
   if (!s || !String(s).trim()) return set;
-  for (const x of String(s).split(",").map(t => t.trim()).filter(Boolean)) set.add(x);
+  for (const x of String(s).split(",").map((t) => t.trim()).filter(Boolean)) {
+    set.add(x);
+  }
   return set;
 }
 
@@ -45,13 +138,14 @@ async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
     WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
     LIMIT 1
   `;
+
   const rows = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
 
   if (rows.length) {
     return {
       historial: parseCSVToSet(rows[0].didsPaquete),
       cierre: parseCSVToSet(rows[0].didsPaquetes_cierre),
-      dirty: false
+      dirty: false,
     };
   }
 
@@ -61,22 +155,23 @@ async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
 async function getComboEntry(conn, owner, cliente, chofer, estado, dia) {
   const k = makeKey(owner, cliente, chofer, estado, dia);
   let entry = homeAppCache.get(k);
+
   if (!entry) {
     entry = await loadComboFromDB(conn, owner, cliente, chofer, estado, dia);
     homeAppCache.set(k, entry);
   }
+
   return entry;
 }
 
 function applyDeltas(entry, posArr, negArr, estado) {
-  // positivos
   for (const p of posArr) {
     const k = String(p);
     entry.historial.add(k);
     entry.cierre.add(k);
   }
 
-  // ✅ ANY y 998 nunca restan
+  // ANY / ANY_EVENTO nunca restan del cierre
   if (estado !== ESTADO_ANY && estado !== ESTADO_ANY_EVENTO) {
     for (const p of negArr) entry.cierre.delete(String(p));
   }
@@ -96,38 +191,30 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
     VALUES
       (?, ?, ?, ?, ?, ?, NOW(), ?)
     ON DUPLICATE KEY UPDATE
-      didsPaquete          = VALUES(didsPaquete),
-      didsPaquetes_cierre  = VALUES(didsPaquetes_cierre),
-      autofecha            = NOW()
+      didsPaquete         = VALUES(didsPaquete),
+      didsPaquetes_cierre = VALUES(didsPaquetes_cierre),
+      autofecha           = NOW()
   `;
-  await executeQuery(conn, upsert, [
-    owner, cliente, chofer, estado,
-    didsPaqueteStr,
-    didsPaquetesCierreStr,
-    dia
-  ], true);
+
+  await executeQuery(
+    conn,
+    upsert,
+    [owner, cliente, chofer, estado, didsPaqueteStr, didsPaquetesCierreStr, dia],
+    true
+  );
 
   entry.dirty = false;
 }
 
-// ✅ limpiar estado global por corrida
 function resetState() {
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
-
-  // ✅ cache solo para la corrida (si querés 2-3 días, esto lo cambiamos)
   homeAppCache.clear();
 }
 
-// ----------------- Helpers -----------------
-function ensure(o, k) { return (o[k] ??= {}); }
-
-// ✅ NO más didOwner=0
+// ----------------- Builders base -----------------
 function pushNodoConGlobal(owner, cli, cho, est, dia, tipo, envio) {
-  // owner real
   pushNodo(owner, cli, cho, est, dia, tipo, envio);
-
-  // global por owner (empresa completa) - NO didOwner=0
   pushNodo(owner, 0, 0, est, dia, tipo, envio);
 }
 
@@ -137,52 +224,124 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   ensure(Aprocesos[owner][cli], cho);
   ensure(Aprocesos[owner][cli][cho], est);
   ensure(Aprocesos[owner][cli][cho][est], dia);
-  if (!Aprocesos[owner][cli][cho][est][dia][1]) Aprocesos[owner][cli][cho][est][dia][1] = [];
-  if (!Aprocesos[owner][cli][cho][est][dia][0]) Aprocesos[owner][cli][cho][est][dia][0] = [];
+
+  if (!Aprocesos[owner][cli][cho][est][dia][1]) {
+    Aprocesos[owner][cli][cho][est][dia][1] = [];
+  }
+  if (!Aprocesos[owner][cli][cho][est][dia][0]) {
+    Aprocesos[owner][cli][cho][est][dia][0] = [];
+  }
+
   Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
 }
 
-// ----------------- Prev desde HOME_APP (sin idx) -----------------
-// Busca combinaciones donde el envío está "en cierre" para ese owner.
-// OJO: depende de strings con coma, pero se usa SOLO para resolver "previo" por paquete.
-async function getPrevFromHomeApp(conn, owner, envio) {
-  const qPrev = `
-    SELECT estado, didChofer, didCliente, dia
-    FROM home_app
-    WHERE didOwner = ?
-      AND FIND_IN_SET(?, didsPaquetes_cierre) > 0
-    ORDER BY dia DESC, autofecha DESC
-    LIMIT 1
-  `;
-  return await executeQuery(conn, qPrev, [owner, String(envio)]);
+// ----------------- Prefetch batch: previos desde CDC -----------------
+// Trae el último estado conocido ANTES del primer id del lote para cada owner+envio afectado.
+// Después, dentro del lote, se va actualizando en memoria.
+async function preloadPrevEstadosDesdeCDC(conn, rowsEstado) {
+  const prevMap = new Map();
+  if (!rowsEstado.length) return prevMap;
+
+  const minId = Math.min(...rowsEstado.map((r) => Number(r.id)).filter(Boolean));
+  const pairs = uniquePairs(rowsEstado, "didPaquete");
+
+  for (const pairChunk of chunkArray(pairs, LOOKUP_CHUNK)) {
+    const grouped = groupPairsByOwner(pairChunk);
+    const { sql, params } = buildOwnerEnvioWhere(grouped, "didOwner", "didPaquete");
+
+    const q = `
+      SELECT c.didOwner, c.didPaquete, c.didCliente, c.didChofer, c.quien, c.estado, c.fecha, c.fecha_inicio
+      FROM cdc c
+      INNER JOIN (
+        SELECT didOwner, didPaquete, MAX(id) AS maxId
+        FROM cdc
+        WHERE id < ?
+          AND didCliente IS NOT NULL
+          AND (ejecutar = "estado" OR ejecutar = "asignaciones")
+          AND (${sql})
+        GROUP BY didOwner, didPaquete
+      ) x
+        ON x.maxId = c.id
+    `;
+
+    const rows = await executeQuery(conn, q, [minId, ...params]);
+
+    for (const row of rows) {
+      const owner = Number(row.didOwner);
+      const envio = normalizeEnvio(row.didPaquete);
+      const state = buildCurrentStateFromEstadoRow(row);
+
+      if (!owner || !envio || state.estado === null) continue;
+      prevMap.set(pairKey(owner, envio), state);
+    }
+  }
+
+  return prevMap;
 }
 
+// ----------------- Prefetch batch: último chofer desde asignaciones -----------------
+async function preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignaciones) {
+  const prevMap = new Map();
+  if (!rowsAsignaciones.length) return prevMap;
+
+  const pairs = uniquePairs(rowsAsignaciones, "didPaquete");
+
+  for (const pairChunk of chunkArray(pairs, LOOKUP_CHUNK)) {
+    const grouped = groupPairsByOwner(pairChunk);
+    const { sql, params } = buildOwnerEnvioWhere(grouped, "didOwner", "didEnvio");
+
+    const q = `
+      SELECT a.didOwner, a.didEnvio, a.operador AS didChofer
+      FROM asignaciones a
+      INNER JOIN (
+        SELECT didOwner, didEnvio, MAX(id) AS maxId
+        FROM asignaciones
+        WHERE operador IS NOT NULL
+          AND (${sql})
+        GROUP BY didOwner, didEnvio
+      ) x
+        ON x.maxId = a.id
+    `;
+
+    const rows = await executeQuery(conn, q, params);
+
+    for (const row of rows) {
+      const owner = Number(row.didOwner);
+      const envio = normalizeEnvio(row.didEnvio);
+      const chofer = Number(row.didChofer) || 0;
+
+      if (!owner || !envio) continue;
+      prevMap.set(pairKey(owner, envio), chofer);
+    }
+  }
+
+  return prevMap;
+}
 
 // ----------------- Builder para disparador = 'estado' -----------------
-async function buildAprocesosEstado(rows, connection) {
+async function buildAprocesosEstado(rows, prevStateMap) {
   for (const row of rows) {
-    const OW = row.didOwner;
-    const CLI = row.didCliente ?? 0;
+    const OW = Number(row.didOwner);
+    const CLI = Number(row.didCliente) || 0;
     const EST = nEstado(row.estado);
+
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
     const diaEvento = getDiaFromTS(row.fecha);
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
-    const envio = String(row.didPaquete);
-    const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
+    const envio = normalizeEnvio(row.didPaquete);
+    const CHO = EST === 0 ? (Number(row.quien) || 0) : (Number(row.didChofer) || 0);
 
-    // ✅ prev desde home_app (sin idx)
-    const prevRows = await getPrevFromHomeApp(connection, OW, envio);
+    const prev = prevStateMap.get(pairKey(OW, envio));
 
-    for (const prev of prevRows) {
+    if (prev && prev.estado !== null) {
       const PREV_EST = nEstado(prev.estado);
       const PREV_CHO = Number(prev.didChofer) || 0;
       const PREV_CLI = Number(prev.didCliente) || 0;
-      const PREV_DIA = prev.dia || dia; // fallback
+      const PREV_DIA = prev.dia || dia;
 
-      // negativos previos
       pushNodoConGlobal(OW, 0, 0, PREV_EST, PREV_DIA, 0, envio);
       pushNodo(OW, PREV_CLI, 0, PREV_EST, PREV_DIA, 0, envio);
 
@@ -212,17 +371,16 @@ async function buildAprocesosEstado(rows, connection) {
       }
     }
 
-    // positivos actuales (para el dia actual del evento)
+    // positivos actuales
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
-    // ✅ ANY: existió en el día (no depende del estado)
+
     pushNodo(OW, 0, 0, ESTADO_ANY, diaPaquete, 1, envio);
     pushNodo(OW, CLI, 0, ESTADO_ANY, diaPaquete, 1, envio);
 
     pushNodo(OW, 0, 0, ESTADO_ANY_EVENTO, dia, 1, envio);
     pushNodo(OW, CLI, 0, ESTADO_ANY_EVENTO, dia, 1, envio);
 
-    // 69
     if (ESTADOS_69.has(EST)) {
       pushNodoConGlobal(OW, 0, 0, 69, dia, 1, envio);
       pushNodo(OW, CLI, 0, 69, dia, 1, envio);
@@ -231,7 +389,6 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 69, dia, 0, envio);
     }
 
-    // 70
     if (ESTADOS_70.has(EST)) {
       pushNodoConGlobal(OW, 0, 0, 70, dia, 1, envio);
       pushNodo(OW, CLI, 0, 70, dia, 1, envio);
@@ -240,7 +397,6 @@ async function buildAprocesosEstado(rows, connection) {
       pushNodo(OW, CLI, 0, 70, dia, 0, envio);
     }
 
-    // combinaciones por chofer
     if (CHO !== 0) {
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
@@ -262,36 +418,44 @@ async function buildAprocesosEstado(rows, connection) {
       }
     }
 
+    prevStateMap.set(pairKey(OW, envio), {
+      estado: EST,
+      didChofer: CHO,
+      didCliente: CLI,
+      dia,
+    });
+
     idsProcesados.push(row.id);
   }
+
   return Aprocesos;
 }
 
 // ----------------- Builder para disparador = 'asignaciones' -----------------
-async function buildAprocesosAsignaciones(conn, rows) {
+async function buildAprocesosAsignaciones(rows, prevChoferMap) {
   for (const row of rows) {
-    const OW = row.didOwner;
-    const CLI = row.didCliente ?? 0;
-    const CHO = row.didChofer ?? 0;
+    const OW = Number(row.didOwner);
+    const CLI = Number(row.didCliente) || 0;
+    const CHO = Number(row.didChofer) || 0;
     const EST = nEstado(row.estado);
-    const envio = String(row.didPaquete);
+    const envio = normalizeEnvio(row.didPaquete);
+
     if (!OW || EST === null) continue;
+
     const dia = getDiaFromTS(row.fecha);
     const diaEvento = getDiaFromTS(row.fecha);
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
-
     if (CHO !== 0) {
-      // positivos por chofer
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
 
-      // global por owner (sin owner=0)
       pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
       pushNodo(OW, CLI, 0, EST, dia, 1, envio);
-      // ✅ ANY: existió en el día
+
       pushNodo(OW, 0, 0, ESTADO_ANY, diaPaquete, 1, envio);
       pushNodo(OW, CLI, 0, ESTADO_ANY, diaPaquete, 1, envio);
+
       pushNodo(OW, 0, 0, ESTADO_ANY_EVENTO, dia, 1, envio);
       pushNodo(OW, CLI, 0, ESTADO_ANY_EVENTO, dia, 1, envio);
 
@@ -318,50 +482,44 @@ async function buildAprocesosAsignaciones(conn, rows) {
       }
     }
 
-    const qChoferAnterior = `
-      SELECT operador AS didChofer
-      FROM asignaciones
-      WHERE didEnvio = ? AND didOwner = ? AND operador IS NOT NULL
-      ORDER BY id DESC
-      LIMIT 1
-    `;
-    const prev = await executeQuery(conn, qChoferAnterior, [envio, OW]);
+    const prevChofer = Number(prevChoferMap.get(pairKey(OW, envio))) || 0;
 
-    if (prev.length) {
-      const choPrev = prev[0].didChofer || 0;
-      if (choPrev !== 0) {
-        // negativos por chofer anterior
-        pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
-        pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
+    if (prevChofer !== 0 && prevChofer !== CHO) {
+      pushNodo(OW, CLI, prevChofer, EST, dia, 0, envio);
+      pushNodo(OW, 0, prevChofer, EST, dia, 0, envio);
 
-        pushNodoConGlobal(OW, 0, 0, EST, dia, 0, envio);
-        pushNodo(OW, CLI, 0, EST, dia, 0, envio);
+      pushNodoConGlobal(OW, 0, 0, EST, dia, 0, envio);
+      pushNodo(OW, CLI, 0, EST, dia, 0, envio);
 
-        if (ESTADOS_69.has(EST)) {
-          pushNodo(OW, CLI, choPrev, 69, dia, 0, envio);
-          pushNodo(OW, 0, choPrev, 69, dia, 0, envio);
+      if (ESTADOS_69.has(EST)) {
+        pushNodo(OW, CLI, prevChofer, 69, dia, 0, envio);
+        pushNodo(OW, 0, prevChofer, 69, dia, 0, envio);
 
-          pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
-          pushNodo(OW, CLI, 0, 69, dia, 0, envio);
-        }
-
-        if (ESTADOS_70.has(EST)) {
-          pushNodo(OW, CLI, choPrev, 70, dia, 0, envio);
-          pushNodo(OW, 0, choPrev, 70, dia, 0, envio);
-
-          pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
-          pushNodo(OW, CLI, 0, 70, dia, 0, envio);
-        }
+        pushNodoConGlobal(OW, 0, 0, 69, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 69, dia, 0, envio);
       }
+
+      if (ESTADOS_70.has(EST)) {
+        pushNodo(OW, CLI, prevChofer, 70, dia, 0, envio);
+        pushNodo(OW, 0, prevChofer, 70, dia, 0, envio);
+
+        pushNodoConGlobal(OW, 0, 0, 70, dia, 0, envio);
+        pushNodo(OW, CLI, 0, 70, dia, 0, envio);
+      }
+    }
+
+    if (CHO !== 0) {
+      prevChoferMap.set(pairKey(OW, envio), CHO);
     }
 
     idsProcesados.push(row.id);
   }
+
   return Aprocesos;
 }
 
-// ----------------- Aplicar batch (cache + flush) -----------------
-async function aplicarAprocesosAHommeApp(conn) {
+// ----------------- Aplicar batch -----------------
+async function aplicarAprocesosAHomeApp(conn) {
   const COMMIT_EVERY = 300;
   let ops = 0;
 
@@ -392,20 +550,15 @@ async function aplicarAprocesosAHommeApp(conn) {
               const nodo = porDia[dia];
               const pos = [...new Set(nodo?.[1] || [])];
               const neg = [...new Set(nodo?.[0] || [])];
+
               if (!pos.length && !neg.length) continue;
 
-              // ✅ 1) cargar combo 1 vez desde DB (lazy)
               const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
-
-              // ✅ 2) aplicar deltas en memoria
               applyDeltas(entry, pos, neg, estado);
-
-
-
-              // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
               await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
 
               ops += 1;
+
               if (ops % COMMIT_EVERY === 0) {
                 await commit();
                 await begin();
@@ -422,67 +575,107 @@ async function aplicarAprocesosAHommeApp(conn) {
     throw e;
   }
 
-  // Marcar CDC como procesado
   if (idsProcesados.length > 0) {
     const CHUNK = 1000;
+
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
       const slice = idsProcesados.slice(i, i + CHUNK);
+
       const updCdc = `
         UPDATE cdc
-        SET procesado=1, fProcesado=NOW()
+        SET procesado = 1, fProcesado = NOW()
         WHERE id IN (${slice.map(() => "?").join(",")})
       `;
+
       await executeQuery(conn, updCdc, slice);
     }
   }
 }
 
-// ----------------- Batch principal -----------------
-let PENDIENTES_HOY_RUNNING = false;
+// ----------------- Lote principal -----------------
+async function procesarLote(conn) {
+  resetState();
 
+  const selectCDC = `
+    SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
+    FROM cdc
+    WHERE procesado = 0
+      AND (ejecutar = "estado" OR ejecutar = "asignaciones")
+      AND didCliente IS NOT NULL
+    ORDER BY id ASC
+    LIMIT ?
+  `;
+
+  const rows = await executeQuery(conn, selectCDC, [FETCH]);
+
+  if (!rows.length) {
+    return { ok: true, fetched: 0, processedIds: 0 };
+  }
+
+  const rowsEstado = rows.filter((r) => r.disparador === "estado");
+  const rowsAsignaciones = rows.filter((r) => r.disparador === "asignaciones");
+
+  const prevStateMap = await preloadPrevEstadosDesdeCDC(conn, rowsEstado);
+  const prevChoferMap = await preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignaciones);
+
+  await buildAprocesosEstado(rowsEstado, prevStateMap);
+  await buildAprocesosAsignaciones(rowsAsignaciones, prevChoferMap);
+  await aplicarAprocesosAHomeApp(conn);
+
+  return {
+    ok: true,
+    fetched: rows.length,
+    processedIds: idsProcesados.length,
+    lastId: rows[rows.length - 1]?.id || null,
+  };
+}
+
+// ----------------- Batch principal en loop -----------------
 async function pendientesHoy() {
   if (PENDIENTES_HOY_RUNNING) {
     console.log("⏭️ pendientesHoy ya está corriendo, salteo esta ejecución");
     return { ok: true, skipped: true };
   }
 
-
   PENDIENTES_HOY_RUNNING = true;
-
-  resetState();
 
   const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
 
   try {
-    const FETCH = 3000;
+    let totalFetched = 0;
+    let totalProcessed = 0;
+    let batches = 0;
 
-    const selectCDC = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
-      FROM cdc
-      WHERE procesado=0
-        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
-        AND didCliente IS NOT NULL
-      ORDER BY id ASC
-      LIMIT ?
-    `;
-    const rows = await executeQuery(conn, selectCDC, [FETCH]);
+    while (true) {
+      const t0 = Date.now();
+      const result = await procesarLote(conn);
 
-    const rowsEstado = rows.filter(r => r.disparador === "estado");
-    const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
+      if (!result.fetched) {
+        console.log("✅ pendientesHoy: no hay más registros con procesado=0");
+        break;
+      }
 
-    console.log("llegamos 1");
+      batches += 1;
+      totalFetched += result.fetched;
+      totalProcessed += result.processedIds;
 
-    await buildAprocesosEstado(rowsEstado, conn);
-    console.log("llegamos 2");
+      const elapsedMs = Date.now() - t0;
 
-    await buildAprocesosAsignaciones(conn, rowsAsignaciones);
-    console.log("llegamos 3");
+      console.log(
+        `✅ lote ${batches} | fetched=${result.fetched} | processed=${result.processedIds} | lastId=${result.lastId} | tiempo=${(elapsedMs / 1000).toFixed(1)}s`
+      );
 
-    await aplicarAprocesosAHommeApp(conn);
-    console.log("llegamos 4");
+      // pequeño respiro para no castigar tanto a la DB
+      await sleep(50);
+    }
 
-    return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
+    return {
+      ok: true,
+      fetched: totalFetched,
+      processedIds: totalProcessed,
+      batches,
+    };
   } catch (err) {
     fatalErr = err;
     console.error("❌ Error batch:", err);
@@ -508,8 +701,5 @@ async function pendientesHoy() {
     } catch (_) { }
   }
 }
-
-// ✅ NO ejecutar automáticamente al importar
-pendientesHoy();
 
 module.exports = { pendientesHoy };
