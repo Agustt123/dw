@@ -67,7 +67,7 @@ async function getConnection(idempresa) {
         } catch (_) { }
 
         const msg = error?.message || String(error);
-        console.error("❌ Error al obtener conexión:", msg);
+        //  console.error("❌ Error al obtener conexión:", msg);
 
         throw {
             status: 500,
@@ -146,7 +146,7 @@ async function getConnectionLocalEnvios() {
         await ensurePools();
         return await dwPoolEnvios.getConnection();
     } catch (error) {
-        console.error("❌ Error al obtener conexión local (ENVIOS):", error.message);
+        // console.error("❌ Error al obtener conexión local (ENVIOS):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
 }
@@ -156,7 +156,7 @@ async function getConnectionLocalCdc() {
         await ensurePools();
         return await dwPoolCdc.getConnection();
     } catch (error) {
-        console.error("❌ Error al obtener conexión local (CDC):", error.message);
+        //console.error("❌ Error al obtener conexión local (CDC):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
 }
@@ -166,7 +166,7 @@ async function getConnectionLocalPendientes() {
         await ensurePools();
         return await dwPoolPend.getConnection();
     } catch (error) {
-        console.error("❌ Error al obtener conexión local (PENDIENTES):", error.message);
+        // console.error("❌ Error al obtener conexión local (PENDIENTES):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
 }

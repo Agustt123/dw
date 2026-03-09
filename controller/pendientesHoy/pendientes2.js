@@ -10,12 +10,57 @@ const ESTADO_ANY = 999; // existió en el día según fecha_inicio
 const ESTADO_ANY_EVENTO = 998; // existió en el día del evento
 
 const TZ = "America/Argentina/Buenos_Aires";
-const FETCH = 5000;
-const LOOKUP_CHUNK = 500;
+
+// Tunables
+const FETCH = Number(process.env.PENDIENTES_FETCH || 5000);
+const LOOKUP_CHUNK = Number(process.env.PENDIENTES_LOOKUP_CHUNK || 500);
+const COMMIT_EVERY = Number(process.env.PENDIENTES_COMMIT_EVERY || 300);
+const LOOP_PAUSE_MS = Number(process.env.PENDIENTES_LOOP_PAUSE_MS || 50);
+const SLOW_BATCH_MS = Number(process.env.PENDIENTES_SLOW_BATCH_MS || 30000);
+const LOG_EVERY_BATCH = Number(process.env.PENDIENTES_LOG_EVERY_BATCH || 1);
 
 let PENDIENTES_HOY_RUNNING = false;
 
 // ----------------- Utils -----------------
+function nowMs() {
+  return Date.now();
+}
+
+function fmtMs(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(2)}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${rem.toFixed(1)}s`;
+}
+
+function fmtNum(n) {
+  return Number(n || 0).toLocaleString("es-AR");
+}
+
+function rate(count, ms) {
+  if (!ms || ms <= 0) return "0.00";
+  return (count / (ms / 1000)).toFixed(2);
+}
+
+function memorySnapshot() {
+  const m = process.memoryUsage();
+  return {
+    rssMB: +(m.rss / 1024 / 1024).toFixed(1),
+    heapTotalMB: +(m.heapTotal / 1024 / 1024).toFixed(1),
+    heapUsedMB: +(m.heapUsed / 1024 / 1024).toFixed(1),
+    externalMB: +(m.external / 1024 / 1024).toFixed(1),
+  };
+}
+
+function logMemory(prefix = "MEM") {
+  const m = memorySnapshot();
+  console.log(
+    `🧠 [${prefix}] rss=${m.rssMB}MB heapUsed=${m.heapUsedMB}MB heapTotal=${m.heapTotalMB}MB external=${m.externalMB}MB`
+  );
+}
+
 function getDiaFromTS(ts) {
   const d = new Date(ts);
   const ok = Number.isNaN(d.getTime()) ? new Date() : d;
@@ -115,6 +160,55 @@ function buildCurrentStateFromEstadoRow(row) {
   };
 }
 
+function createMetrics() {
+  return {
+    totalStartMs: nowMs(),
+    batchNo: 0,
+    totalFetched: 0,
+    totalProcessed: 0,
+    totalEstadoRows: 0,
+    totalAsignacionesRows: 0,
+    totalApplyOps: 0,
+    totalFlushes: 0,
+    totalMarkedProcessed: 0,
+    totalPreloadEstadoPairs: 0,
+    totalPreloadChoferPairs: 0,
+    maxBatchMs: 0,
+    minBatchMs: null,
+  };
+}
+
+function logBatchSummary(batchMetrics, totals) {
+  const slowMark = batchMetrics.totalMs >= SLOW_BATCH_MS ? " 🐢 LENTO" : "";
+
+  console.log(
+    `📦 [LOTE ${batchMetrics.batchNo}] fetched=${fmtNum(batchMetrics.fetched)} ` +
+    `estado=${fmtNum(batchMetrics.rowsEstado)} asignaciones=${fmtNum(batchMetrics.rowsAsignaciones)} ` +
+    `processed=${fmtNum(batchMetrics.processedIds)} applyOps=${fmtNum(batchMetrics.applyOps)} flushes=${fmtNum(batchMetrics.flushes)} ` +
+    `lastId=${batchMetrics.lastId} total=${fmtMs(batchMetrics.totalMs)} ${slowMark}`
+  );
+
+  console.log(
+    `   ⏱ fases | select=${fmtMs(batchMetrics.selectMs)} prevEstado=${fmtMs(batchMetrics.preloadEstadoMs)} ` +
+    `prevChofer=${fmtMs(batchMetrics.preloadChoferMs)} buildEstado=${fmtMs(batchMetrics.buildEstadoMs)} ` +
+    `buildAsig=${fmtMs(batchMetrics.buildAsignacionesMs)} apply=${fmtMs(batchMetrics.applyMs)}`
+  );
+
+  console.log(
+    `   🚀 lote | fetched/s=${rate(batchMetrics.fetched, batchMetrics.totalMs)} ` +
+    `processed/s=${rate(batchMetrics.processedIds, batchMetrics.totalMs)} ` +
+    `applyOps/s=${rate(batchMetrics.applyOps, batchMetrics.totalMs)}`
+  );
+
+  console.log(
+    `   📊 total | batches=${fmtNum(totals.batchNo)} fetched=${fmtNum(totals.totalFetched)} ` +
+    `processed=${fmtNum(totals.totalProcessed)} marked=${fmtNum(totals.totalMarkedProcessed)} ` +
+    `avgProcessed/s=${rate(totals.totalProcessed, nowMs() - totals.totalStartMs)}`
+  );
+
+  logMemory(`LOTE ${batchMetrics.batchNo}`);
+}
+
 // ----------------- Cache en memoria por lote -----------------
 // key: "owner|cliente|chofer|estado|dia"
 const homeAppCache = new Map();
@@ -125,9 +219,11 @@ const makeKey = (owner, cliente, chofer, estado, dia) =>
 function parseCSVToSet(s) {
   const set = new Set();
   if (!s || !String(s).trim()) return set;
+
   for (const x of String(s).split(",").map((t) => t.trim()).filter(Boolean)) {
     set.add(x);
   }
+
   return set;
 }
 
@@ -171,7 +267,6 @@ function applyDeltas(entry, posArr, negArr, estado) {
     entry.cierre.add(k);
   }
 
-  // ANY / ANY_EVENTO nunca restan del cierre
   if (estado !== ESTADO_ANY && estado !== ESTADO_ANY_EVENTO) {
     for (const p of negArr) entry.cierre.delete(String(p));
   }
@@ -180,7 +275,7 @@ function applyDeltas(entry, posArr, negArr, estado) {
 }
 
 async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
-  if (!entry?.dirty) return;
+  if (!entry?.dirty) return false;
 
   const didsPaqueteStr = Array.from(entry.historial).join(",");
   const didsPaquetesCierreStr = Array.from(entry.cierre).join(",");
@@ -204,6 +299,7 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   );
 
   entry.dirty = false;
+  return true;
 }
 
 function resetState() {
@@ -236,8 +332,6 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
 }
 
 // ----------------- Prefetch batch: previos desde CDC -----------------
-// Trae el último estado conocido ANTES del primer id del lote para cada owner+envio afectado.
-// Después, dentro del lote, se va actualizando en memoria.
 async function preloadPrevEstadosDesdeCDC(conn, rowsEstado) {
   const prevMap = new Map();
   if (!rowsEstado.length) return prevMap;
@@ -371,7 +465,6 @@ async function buildAprocesosEstado(rows, prevStateMap) {
       }
     }
 
-    // positivos actuales
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
@@ -519,9 +612,9 @@ async function buildAprocesosAsignaciones(rows, prevChoferMap) {
 }
 
 // ----------------- Aplicar batch -----------------
-async function aplicarAprocesosAHomeApp(conn) {
-  const COMMIT_EVERY = 300;
+async function aplicarAprocesosAHomeApp(conn, batchMetrics) {
   let ops = 0;
+  let flushes = 0;
 
   const begin = async () => executeQuery(conn, "START TRANSACTION");
   const commit = async () => executeQuery(conn, "COMMIT");
@@ -555,9 +648,10 @@ async function aplicarAprocesosAHomeApp(conn) {
 
               const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
               applyDeltas(entry, pos, neg, estado);
-              await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
+              const didFlush = await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
 
               ops += 1;
+              if (didFlush) flushes += 1;
 
               if (ops % COMMIT_EVERY === 0) {
                 await commit();
@@ -590,44 +684,137 @@ async function aplicarAprocesosAHomeApp(conn) {
       await executeQuery(conn, updCdc, slice);
     }
   }
+
+  batchMetrics.applyOps = ops;
+  batchMetrics.flushes = flushes;
+  batchMetrics.markedProcessed = idsProcesados.length;
+
+  return {
+    ops,
+    flushes,
+    markedProcessed: idsProcesados.length,
+  };
 }
 
 // ----------------- Lote principal -----------------
-async function procesarLote(conn) {
+async function procesarLote(conn, totals) {
   resetState();
 
-  const selectCDC = `
-    SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
-    FROM cdc
-    WHERE procesado = 0
-      AND (ejecutar = "estado" OR ejecutar = "asignaciones")
-      AND didCliente IS NOT NULL
-    ORDER BY id ASC
-    LIMIT ?
-  `;
+  const batchMetrics = {
+    batchNo: totals.batchNo + 1,
+    fetched: 0,
+    rowsEstado: 0,
+    rowsAsignaciones: 0,
+    processedIds: 0,
+    lastId: null,
+    selectMs: 0,
+    preloadEstadoMs: 0,
+    preloadChoferMs: 0,
+    buildEstadoMs: 0,
+    buildAsignacionesMs: 0,
+    applyMs: 0,
+    totalMs: 0,
+    applyOps: 0,
+    flushes: 0,
+    markedProcessed: 0,
+  };
 
-  const rows = await executeQuery(conn, selectCDC, [FETCH]);
+  const lotStart = nowMs();
+
+  // SELECT
+  {
+    const t = nowMs();
+
+    const selectCDC = `
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
+      FROM cdc
+      WHERE procesado = 0
+        AND (ejecutar = "estado" OR ejecutar = "asignaciones")
+        AND didCliente IS NOT NULL
+      ORDER BY id ASC
+      LIMIT ?
+    `;
+
+    batchMetrics.rows = await executeQuery(conn, selectCDC, [FETCH]);
+    batchMetrics.selectMs = nowMs() - t;
+  }
+
+  const rows = batchMetrics.rows;
 
   if (!rows.length) {
-    return { ok: true, fetched: 0, processedIds: 0 };
+    batchMetrics.totalMs = nowMs() - lotStart;
+    delete batchMetrics.rows;
+    return { batchMetrics, done: true };
   }
+
+  batchMetrics.fetched = rows.length;
+  batchMetrics.lastId = rows[rows.length - 1]?.id || null;
 
   const rowsEstado = rows.filter((r) => r.disparador === "estado");
   const rowsAsignaciones = rows.filter((r) => r.disparador === "asignaciones");
 
-  const prevStateMap = await preloadPrevEstadosDesdeCDC(conn, rowsEstado);
-  const prevChoferMap = await preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignaciones);
+  batchMetrics.rowsEstado = rowsEstado.length;
+  batchMetrics.rowsAsignaciones = rowsAsignaciones.length;
 
-  await buildAprocesosEstado(rowsEstado, prevStateMap);
-  await buildAprocesosAsignaciones(rowsAsignaciones, prevChoferMap);
-  await aplicarAprocesosAHomeApp(conn);
+  // PRELOAD ESTADO
+  let prevStateMap;
+  {
+    const t = nowMs();
+    prevStateMap = await preloadPrevEstadosDesdeCDC(conn, rowsEstado);
+    batchMetrics.preloadEstadoMs = nowMs() - t;
+    totals.totalPreloadEstadoPairs += prevStateMap.size;
+  }
 
-  return {
-    ok: true,
-    fetched: rows.length,
-    processedIds: idsProcesados.length,
-    lastId: rows[rows.length - 1]?.id || null,
-  };
+  // PRELOAD CHOFER
+  let prevChoferMap;
+  {
+    const t = nowMs();
+    prevChoferMap = await preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignaciones);
+    batchMetrics.preloadChoferMs = nowMs() - t;
+    totals.totalPreloadChoferPairs += prevChoferMap.size;
+  }
+
+  // BUILD ESTADO
+  {
+    const t = nowMs();
+    await buildAprocesosEstado(rowsEstado, prevStateMap);
+    batchMetrics.buildEstadoMs = nowMs() - t;
+  }
+
+  // BUILD ASIGNACIONES
+  {
+    const t = nowMs();
+    await buildAprocesosAsignaciones(rowsAsignaciones, prevChoferMap);
+    batchMetrics.buildAsignacionesMs = nowMs() - t;
+  }
+
+  // APPLY
+  {
+    const t = nowMs();
+    await aplicarAprocesosAHomeApp(conn, batchMetrics);
+    batchMetrics.applyMs = nowMs() - t;
+  }
+
+  batchMetrics.processedIds = idsProcesados.length;
+  batchMetrics.totalMs = nowMs() - lotStart;
+
+  delete batchMetrics.rows;
+
+  totals.batchNo += 1;
+  totals.totalFetched += batchMetrics.fetched;
+  totals.totalProcessed += batchMetrics.processedIds;
+  totals.totalEstadoRows += batchMetrics.rowsEstado;
+  totals.totalAsignacionesRows += batchMetrics.rowsAsignaciones;
+  totals.totalApplyOps += batchMetrics.applyOps;
+  totals.totalFlushes += batchMetrics.flushes;
+  totals.totalMarkedProcessed += batchMetrics.markedProcessed;
+  totals.maxBatchMs = Math.max(totals.maxBatchMs, batchMetrics.totalMs);
+
+  if (totals.minBatchMs === null || batchMetrics.totalMs < totals.minBatchMs) {
+    totals.minBatchMs = batchMetrics.totalMs;
+  }
+
+  return { batchMetrics, done: false };
 }
 
 // ----------------- Batch principal en loop -----------------
@@ -642,39 +829,63 @@ async function pendientesHoy() {
   const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
 
+  const totals = createMetrics();
+
   try {
-    let totalFetched = 0;
-    let totalProcessed = 0;
-    let batches = 0;
+    console.log(
+      `🚀 pendientesHoy iniciado | FETCH=${FETCH} LOOKUP_CHUNK=${LOOKUP_CHUNK} COMMIT_EVERY=${COMMIT_EVERY} LOOP_PAUSE_MS=${LOOP_PAUSE_MS}`
+    );
+    logMemory("START");
 
     while (true) {
-      const t0 = Date.now();
-      const result = await procesarLote(conn);
+      const { batchMetrics, done } = await procesarLote(conn, totals);
 
-      if (!result.fetched) {
+      if (done) {
         console.log("✅ pendientesHoy: no hay más registros con procesado=0");
         break;
       }
 
-      batches += 1;
-      totalFetched += result.fetched;
-      totalProcessed += result.processedIds;
+      if (totals.batchNo % LOG_EVERY_BATCH === 0) {
+        logBatchSummary(batchMetrics, totals);
+      }
 
-      const elapsedMs = Date.now() - t0;
-
-      console.log(
-        `✅ lote ${batches} | fetched=${result.fetched} | processed=${result.processedIds} | lastId=${result.lastId} | tiempo=${(elapsedMs / 1000).toFixed(1)}s`
-      );
-
-      // pequeño respiro para no castigar tanto a la DB
-      await sleep(50);
+      await sleep(LOOP_PAUSE_MS);
     }
+
+    const totalMs = nowMs() - totals.totalStartMs;
+
+    console.log("🏁 pendientesHoy finalizado");
+    console.log(
+      `📊 RESUMEN FINAL | batches=${fmtNum(totals.batchNo)} fetched=${fmtNum(totals.totalFetched)} ` +
+      `processed=${fmtNum(totals.totalProcessed)} estado=${fmtNum(totals.totalEstadoRows)} ` +
+      `asignaciones=${fmtNum(totals.totalAsignacionesRows)} applyOps=${fmtNum(totals.totalApplyOps)} ` +
+      `flushes=${fmtNum(totals.totalFlushes)} marked=${fmtNum(totals.totalMarkedProcessed)}`
+    );
+
+    console.log(
+      `⏱ TIEMPOS | total=${fmtMs(totalMs)} avgBatch=${fmtMs(totals.batchNo ? totalMs / totals.batchNo : 0)} ` +
+      `minBatch=${fmtMs(totals.minBatchMs || 0)} maxBatch=${fmtMs(totals.maxBatchMs || 0)}`
+    );
+
+    console.log(
+      `🚀 THROUGHPUT | fetched/s=${rate(totals.totalFetched, totalMs)} ` +
+      `processed/s=${rate(totals.totalProcessed, totalMs)} ` +
+      `applyOps/s=${rate(totals.totalApplyOps, totalMs)}`
+    );
+
+    console.log(
+      `🔎 PRELOAD | prevEstadoPairs=${fmtNum(totals.totalPreloadEstadoPairs)} ` +
+      `prevChoferPairs=${fmtNum(totals.totalPreloadChoferPairs)}`
+    );
+
+    logMemory("END");
 
     return {
       ok: true,
-      fetched: totalFetched,
-      processedIds: totalProcessed,
-      batches,
+      fetched: totals.totalFetched,
+      processedIds: totals.totalProcessed,
+      batches: totals.batchNo,
+      elapsedMs: totalMs,
     };
   } catch (err) {
     fatalErr = err;
