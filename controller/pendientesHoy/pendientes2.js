@@ -11,13 +11,17 @@ const ESTADO_ANY_EVENTO = 998;
 
 const TZ = "America/Argentina/Buenos_Aires";
 
-// Ajustá esto según presión de BD / RAM
+// Ajustables por env
 const FETCH = Number(process.env.PENDIENTES_FETCH || 1000);
-const MAX_BATCHES_PER_RUN = Number(process.env.PENDIENTES_MAX_BATCHES || 200);
 const COMBO_PRELOAD_CHUNK = Number(process.env.PENDIENTES_COMBO_PRELOAD_CHUNK || 250);
 const IDS_UPDATE_CHUNK = Number(process.env.PENDIENTES_IDS_UPDATE_CHUNK || 5000);
 const COMMIT_EVERY = Number(process.env.PENDIENTES_COMMIT_EVERY || 200);
+const LOG_EVERY_ROWS = Number(process.env.PENDIENTES_LOG_EVERY_ROWS || 500);
+const LOG_TOP_DAYS = Number(process.env.PENDIENTES_LOG_TOP_DAYS || 10);
+const SLOW_PREV_MS = Number(process.env.PENDIENTES_SLOW_PREV_MS || 300);
+const SLOW_FLUSH_MS = Number(process.env.PENDIENTES_SLOW_FLUSH_MS || 300);
 
+// Formatter cacheado
 const dayFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: TZ,
   year: "numeric",
@@ -36,7 +40,114 @@ const nEstado = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ----------------- Cache en memoria (GLOBAL POR CORRIDA / BATCH) -----------------
+// ----------------- Logging helpers -----------------
+function hrMs(start) {
+  return Date.now() - start;
+}
+
+function logStep(label, extra = "") {
+  const ts = new Date().toISOString();
+  console.log(`🧭 [PENDIENTES2] ${ts} | ${label}${extra ? " | " + extra : ""}`);
+}
+
+function buildDayStats(rows) {
+  const byFecha = new Map();
+  const byFechaInicio = new Map();
+  const byDisparador = { estado: 0, asignaciones: 0, otro: 0 };
+
+  for (const row of rows) {
+    const dia = getDiaFromTS(row.fecha);
+    byFecha.set(dia, (byFecha.get(dia) || 0) + 1);
+
+    const diaInicio = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : null;
+    if (diaInicio) {
+      byFechaInicio.set(diaInicio, (byFechaInicio.get(diaInicio) || 0) + 1);
+    }
+
+    if (row.disparador === "estado") byDisparador.estado += 1;
+    else if (row.disparador === "asignaciones") byDisparador.asignaciones += 1;
+    else byDisparador.otro += 1;
+  }
+
+  const topFecha = Array.from(byFecha.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, LOG_TOP_DAYS);
+
+  const topFechaInicio = Array.from(byFechaInicio.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, LOG_TOP_DAYS);
+
+  const diasOrdenados = Array.from(byFecha.keys()).sort();
+  const minDia = diasOrdenados[0] || null;
+  const maxDia = diasOrdenados[diasOrdenados.length - 1] || null;
+
+  return {
+    byDisparador,
+    topFecha,
+    topFechaInicio,
+    minDia,
+    maxDia,
+    totalDias: diasOrdenados.length
+  };
+}
+
+function logDayStats(rows) {
+  const stats = buildDayStats(rows);
+
+  logStep(
+    "Distribucion batch",
+    `total=${rows.length} | estado=${stats.byDisparador.estado} | asignaciones=${stats.byDisparador.asignaciones} | rangoDias=${stats.minDia || "-"}..${stats.maxDia || "-"} | diasUnicos=${stats.totalDias}`
+  );
+
+  if (stats.topFecha.length) {
+    console.log("📅 [PENDIENTES2] Top días por fecha:");
+    for (const [dia, count] of stats.topFecha) {
+      console.log(`   - ${dia}: ${count}`);
+    }
+  }
+
+  if (stats.topFechaInicio.length) {
+    console.log("🗓️ [PENDIENTES2] Top días por fecha_inicio:");
+    for (const [dia, count] of stats.topFechaInicio) {
+      console.log(`   - ${dia}: ${count}`);
+    }
+  }
+}
+
+function countAprocesosStats() {
+  let owners = 0;
+  let combos = 0;
+  let pos = 0;
+  let neg = 0;
+
+  for (const ownerKey in Aprocesos) {
+    owners += 1;
+    const porCliente = Aprocesos[ownerKey];
+
+    for (const clienteKey in porCliente) {
+      const porChofer = porCliente[clienteKey];
+
+      for (const choferKey in porChofer) {
+        const porEstado = porChofer[choferKey];
+
+        for (const estadoKey in porEstado) {
+          const porDia = porEstado[estadoKey];
+
+          for (const dia in porDia) {
+            combos += 1;
+            const nodo = porDia[dia];
+            pos += nodo?.[1]?.size || 0;
+            neg += nodo?.[0]?.size || 0;
+          }
+        }
+      }
+    }
+  }
+
+  return { owners, combos, pos, neg };
+}
+
+// ----------------- Cache en memoria -----------------
 // key: "owner|cliente|chofer|estado|dia"
 const homeAppCache = new Map();
 const dirtyHomeAppKeys = new Set();
@@ -62,8 +173,6 @@ function parseCSVToSet(s) {
 
   return set;
 }
-
-
 
 async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
   const sel = `
@@ -148,7 +257,7 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   entry.dirty = false;
 }
 
-// ----------------- Reset por corrida/batch -----------------
+// ----------------- Reset por batch -----------------
 function resetState() {
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
@@ -206,6 +315,7 @@ async function getPrevFromHomeApp(conn, owner, envio) {
 
 // ----------------- Precarga batch de chofer anterior -----------------
 async function preloadPrevChoferes(conn, rows) {
+  const startedAt = Date.now();
   const paresUnicos = new Map();
 
   for (const row of rows) {
@@ -216,9 +326,15 @@ async function preloadPrevChoferes(conn, rows) {
   }
 
   const items = Array.from(paresUnicos.values());
-  if (!items.length) return;
+  if (!items.length) {
+    logStep("preloadPrevChoferes:end", "sin items");
+    return;
+  }
+
+  logStep("preloadPrevChoferes:start", `pares=${items.length}`);
 
   const CHUNK = 500;
+  let totalHits = 0;
 
   for (let i = 0; i < items.length; i += CHUNK) {
     const chunk = items.slice(i, i + CHUNK);
@@ -246,7 +362,14 @@ async function preloadPrevChoferes(conn, rows) {
        AND x.maxId = a.id
     `;
 
+    const qStarted = Date.now();
     const rowsPrev = await executeQuery(conn, q, params);
+    const qElapsed = hrMs(qStarted);
+    totalHits += rowsPrev.length;
+
+    console.log(
+      `📥 [PENDIENTES2][PREV_CHOFER] chunk=${Math.floor(i / CHUNK) + 1} | req=${chunk.length} | hitRows=${rowsPrev.length} | t=${qElapsed}ms`
+    );
 
     for (const r of rowsPrev) {
       prevChoferMemo.set(
@@ -255,7 +378,6 @@ async function preloadPrevChoferes(conn, rows) {
       );
     }
 
-    // completar faltantes con 0 para evitar misses repetidos
     for (const it of chunk) {
       const k = makePrevKey(it.owner, it.envio);
       if (!prevChoferMemo.has(k)) {
@@ -263,11 +385,20 @@ async function preloadPrevChoferes(conn, rows) {
       }
     }
   }
+
+  logStep("preloadPrevChoferes:end", `pares=${items.length} | hits=${totalHits} | elapsed=${hrMs(startedAt)}ms`);
 }
 
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
-  for (const row of rows) {
+  const startedAt = Date.now();
+  logStep("buildAprocesosEstado:start", `rows=${rows.length}`);
+
+  const byDia = new Map();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+
     const OW = Number(row.didOwner);
     const CLI = Number(row.didCliente ?? 0);
     const EST = nEstado(row.estado);
@@ -278,11 +409,20 @@ async function buildAprocesosEstado(rows, connection) {
     const diaEvento = dia;
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
+    byDia.set(dia, (byDia.get(dia) || 0) + 1);
+
     const envio = String(row.didPaquete);
     const CHO = EST === 0 ? (Number(row.quien) || 0) : (Number(row.didChofer) || 0);
 
-    // prev desde home_app (con memo)
+    const prevStarted = Date.now();
     const prevRows = await getPrevFromHomeApp(connection, OW, envio);
+    const prevElapsed = hrMs(prevStarted);
+
+    if (prevElapsed > SLOW_PREV_MS) {
+      console.log(
+        `🐢 [PENDIENTES2][ESTADO][PREV_LENTO] idx=${i + 1}/${rows.length} owner=${OW} envio=${envio} dia=${dia} prevRows=${prevRows.length} t=${prevElapsed}ms`
+      );
+    }
 
     for (const prev of prevRows) {
       const PREV_EST = nEstado(prev.estado);
@@ -292,7 +432,6 @@ async function buildAprocesosEstado(rows, connection) {
 
       if (PREV_EST === null) continue;
 
-      // negativos previos
       pushNodoConGlobal(OW, 0, 0, PREV_EST, PREV_DIA, 0, envio);
       pushNodo(OW, PREV_CLI, 0, PREV_EST, PREV_DIA, 0, envio);
 
@@ -322,7 +461,6 @@ async function buildAprocesosEstado(rows, connection) {
       }
     }
 
-    // positivos actuales
     pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
     pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
@@ -370,6 +508,25 @@ async function buildAprocesosEstado(rows, connection) {
     }
 
     idsProcesados.push(row.id);
+
+    if ((i + 1) % LOG_EVERY_ROWS === 0) {
+      console.log(
+        `📦 [PENDIENTES2][ESTADO] progreso=${i + 1}/${rows.length} | ultimoDia=${dia} | diasUnicos=${byDia.size} | elapsed=${hrMs(startedAt)}ms`
+      );
+    }
+  }
+
+  const topDias = Array.from(byDia.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, LOG_TOP_DAYS);
+
+  logStep("buildAprocesosEstado:end", `rows=${rows.length} | elapsed=${hrMs(startedAt)}ms`);
+
+  if (topDias.length) {
+    console.log("📊 [PENDIENTES2][ESTADO] Top días procesados:");
+    for (const [dia, count] of topDias) {
+      console.log(`   - ${dia}: ${count}`);
+    }
   }
 
   return Aprocesos;
@@ -377,10 +534,18 @@ async function buildAprocesosEstado(rows, connection) {
 
 // ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
-  // precarga batch de chofer anterior
-  await preloadPrevChoferes(conn, rows);
+  const startedAt = Date.now();
+  logStep("buildAprocesosAsignaciones:start", `rows=${rows.length}`);
 
-  for (const row of rows) {
+  const preloadStarted = Date.now();
+  await preloadPrevChoferes(conn, rows);
+  logStep("buildAprocesosAsignaciones:preloadPrevChoferes:end", `elapsed=${hrMs(preloadStarted)}ms`);
+
+  const byDia = new Map();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+
     const OW = Number(row.didOwner);
     const CLI = Number(row.didCliente ?? 0);
     const CHO = Number(row.didChofer ?? 0);
@@ -393,12 +558,12 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const diaEvento = dia;
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
+    byDia.set(dia, (byDia.get(dia) || 0) + 1);
+
     if (CHO !== 0) {
-      // positivos por chofer
       pushNodo(OW, CLI, CHO, EST, dia, 1, envio);
       pushNodo(OW, 0, CHO, EST, dia, 1, envio);
 
-      // global por owner
       pushNodoConGlobal(OW, 0, 0, EST, dia, 1, envio);
       pushNodo(OW, CLI, 0, EST, dia, 1, envio);
 
@@ -434,7 +599,6 @@ async function buildAprocesosAsignaciones(conn, rows) {
     const choPrev = prevChoferMemo.get(makePrevKey(OW, envio)) || 0;
 
     if (choPrev !== 0) {
-      // negativos por chofer anterior
       pushNodo(OW, CLI, choPrev, EST, dia, 0, envio);
       pushNodo(OW, 0, choPrev, EST, dia, 0, envio);
 
@@ -459,6 +623,25 @@ async function buildAprocesosAsignaciones(conn, rows) {
     }
 
     idsProcesados.push(row.id);
+
+    if ((i + 1) % LOG_EVERY_ROWS === 0) {
+      console.log(
+        `📦 [PENDIENTES2][ASIG] progreso=${i + 1}/${rows.length} | ultimoDia=${dia} | diasUnicos=${byDia.size} | elapsed=${hrMs(startedAt)}ms`
+      );
+    }
+  }
+
+  const topDias = Array.from(byDia.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, LOG_TOP_DAYS);
+
+  logStep("buildAprocesosAsignaciones:end", `rows=${rows.length} | elapsed=${hrMs(startedAt)}ms`);
+
+  if (topDias.length) {
+    console.log("📊 [PENDIENTES2][ASIG] Top días procesados:");
+    for (const [dia, count] of topDias) {
+      console.log(`   - ${dia}: ${count}`);
+    }
   }
 
   return Aprocesos;
@@ -504,8 +687,13 @@ function collectComboKeysFromAprocesos() {
 }
 
 async function preloadHomeAppCombos(conn) {
+  const startedAt = Date.now();
   const keys = collectComboKeysFromAprocesos();
+  logStep("preloadHomeAppCombos:start", `keys=${keys.length}`);
+
   if (!keys.length) return;
+
+  let totalRows = 0;
 
   for (let i = 0; i < keys.length; i += COMBO_PRELOAD_CHUNK) {
     const chunk = keys.slice(i, i + COMBO_PRELOAD_CHUNK);
@@ -529,7 +717,15 @@ async function preloadHomeAppCombos(conn) {
       WHERE ${conditions.join(" OR ")}
     `;
 
+    const qStarted = Date.now();
     const rows = await executeQuery(conn, q, params);
+    const qElapsed = hrMs(qStarted);
+
+    totalRows += rows.length;
+
+    console.log(
+      `📥 [PENDIENTES2][PRELOAD_COMBOS] chunk=${Math.floor(i / COMBO_PRELOAD_CHUNK) + 1} | req=${chunk.length} | hitRows=${rows.length} | t=${qElapsed}ms`
+    );
 
     for (const row of rows) {
       const key = makeKey(
@@ -547,7 +743,6 @@ async function preloadHomeAppCombos(conn) {
       });
     }
 
-    // completar faltantes para evitar hits posteriores
     for (const k of chunk) {
       const cacheKey = makeKey(k.owner, k.cliente, k.chofer, k.estado, k.dia);
       if (!homeAppCache.has(cacheKey)) {
@@ -559,11 +754,16 @@ async function preloadHomeAppCombos(conn) {
       }
     }
   }
+
+  logStep("preloadHomeAppCombos:end", `keys=${keys.length} | rows=${totalRows} | elapsed=${hrMs(startedAt)}ms`);
 }
 
 // ----------------- Flush diferido de home_app -----------------
 async function flushDirtyHomeApp(conn) {
+  const startedAt = Date.now();
   let ops = 0;
+
+  logStep("flushDirtyHomeApp:start", `dirtyKeys=${dirtyHomeAppKeys.size}`);
 
   const begin = async () => executeQuery(conn, "START TRANSACTION");
   const commit = async () => executeQuery(conn, "COMMIT");
@@ -577,6 +777,8 @@ async function flushDirtyHomeApp(conn) {
       const entry = homeAppCache.get(key);
       if (!entry?.dirty) continue;
 
+      const oneStarted = Date.now();
+
       await flushEntry(
         conn,
         Number(owner),
@@ -587,15 +789,28 @@ async function flushDirtyHomeApp(conn) {
         entry
       );
 
+      const oneElapsed = hrMs(oneStarted);
       ops += 1;
 
+      if (oneElapsed > SLOW_FLUSH_MS) {
+        console.log(
+          `🐢 [PENDIENTES2][FLUSH_LENTO] op=${ops} | owner=${owner} cli=${cliente} cho=${chofer} est=${estado} dia=${dia} | t=${oneElapsed}ms`
+        );
+      }
+
       if (ops % COMMIT_EVERY === 0) {
+        const cStarted = Date.now();
         await commit();
         await begin();
+        console.log(`💾 [PENDIENTES2][COMMIT] ops=${ops} | t=${hrMs(cStarted)}ms`);
       }
     }
 
+    const cStarted = Date.now();
     await commit();
+    console.log(`💾 [PENDIENTES2][COMMIT_FINAL] ops=${ops} | t=${hrMs(cStarted)}ms`);
+
+    logStep("flushDirtyHomeApp:end", `ops=${ops} | elapsed=${hrMs(startedAt)}ms`);
   } catch (e) {
     try {
       await rollback();
@@ -606,8 +821,18 @@ async function flushDirtyHomeApp(conn) {
 
 // ----------------- Aplicar batch (cache + flush diferido) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
-  // Precarga de combos a tocar para bajar queries 1x1
+  const startedAt = Date.now();
+  logStep("aplicarAprocesosAHommeApp:start");
+
+  const statsBefore = countAprocesosStats();
+  logStep(
+    "Aprocesos stats",
+    `owners=${statsBefore.owners} | combos=${statsBefore.combos} | pos=${statsBefore.pos} | neg=${statsBefore.neg}`
+  );
+
   await preloadHomeAppCombos(conn);
+
+  let applied = 0;
 
   for (const ownerKey in Aprocesos) {
     const owner = Number(ownerKey);
@@ -635,16 +860,27 @@ async function aplicarAprocesosAHommeApp(conn) {
             const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
             applyDeltas(entry, pos, neg, estado);
             markDirty(owner, cliente, chofer, estado, dia);
+
+            applied += 1;
+
+            if (applied % LOG_EVERY_ROWS === 0) {
+              console.log(
+                `🧱 [PENDIENTES2][APLICAR] combosAplicados=${applied} | ultimo=owner:${owner} cli:${cliente} cho:${chofer} est:${estado} dia:${dia}`
+              );
+            }
           }
         }
       }
     }
   }
 
+  logStep("aplicarAprocesosAHommeApp:beforeFlush", `combosAplicados=${applied} | dirtyKeys=${dirtyHomeAppKeys.size}`);
+
   await flushDirtyHomeApp(conn);
 
-  // Marcar CDC como procesado
   if (idsProcesados.length > 0) {
+    logStep("marcandoCDC:start", `ids=${idsProcesados.length}`);
+
     for (let i = 0; i < idsProcesados.length; i += IDS_UPDATE_CHUNK) {
       const slice = idsProcesados.slice(i, i + IDS_UPDATE_CHUNK);
       const updCdc = `
@@ -652,12 +888,22 @@ async function aplicarAprocesosAHommeApp(conn) {
         SET procesado=1, fProcesado=NOW()
         WHERE id IN (${slice.map(() => "?").join(",")})
       `;
+
+      const updStarted = Date.now();
       await executeQuery(conn, updCdc, slice);
+
+      console.log(
+        `✅ [PENDIENTES2][CDC_UPDATE] chunk=${Math.floor(i / IDS_UPDATE_CHUNK) + 1} | ids=${slice.length} | t=${hrMs(updStarted)}ms`
+      );
     }
+
+    logStep("marcandoCDC:end", `ids=${idsProcesados.length}`);
   }
+
+  logStep("aplicarAprocesosAHommeApp:end", `elapsed=${hrMs(startedAt)}ms`);
 }
 
-// ----------------- Un batch -----------------
+// ----------------- Batch principal -----------------
 let PENDIENTES_HOY_RUNNING = false;
 
 async function pendientesHoy() {
@@ -669,10 +915,13 @@ async function pendientesHoy() {
   PENDIENTES_HOY_RUNNING = true;
   resetState();
 
+  const globalStartedAt = Date.now();
   const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
 
   try {
+    logStep("pendientesHoy:start", `FETCH=${FETCH}`);
+
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
       FROM cdc
@@ -683,28 +932,47 @@ async function pendientesHoy() {
       LIMIT ?
     `;
 
-    console.time("selectCDC");
+    const s1 = Date.now();
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
-    console.timeEnd("selectCDC");
+    logStep("selectCDC:end", `rows=${rows.length} | elapsed=${hrMs(s1)}ms`);
 
     if (!rows.length) {
+      logStep("pendientesHoy:empty", `elapsed=${hrMs(globalStartedAt)}ms`);
       return { ok: true, fetched: 0, processedIds: 0, empty: true };
     }
+
+    const ids = rows.map(r => Number(r.id) || 0).filter(Boolean);
+    const minId = ids.length ? Math.min(...ids) : 0;
+    const maxId = ids.length ? Math.max(...ids) : 0;
+
+    logStep("batch ids", `minId=${minId} | maxId=${maxId}`);
+    logDayStats(rows);
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
 
-    console.time("buildAprocesosEstado");
+    const s2 = Date.now();
     await buildAprocesosEstado(rowsEstado, conn);
-    console.timeEnd("buildAprocesosEstado");
+    logStep("buildAprocesosEstado:done", `elapsed=${hrMs(s2)}ms`);
 
-    console.time("buildAprocesosAsignaciones");
+    const s3 = Date.now();
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
-    console.timeEnd("buildAprocesosAsignaciones");
+    logStep("buildAprocesosAsignaciones:done", `elapsed=${hrMs(s3)}ms`);
 
-    console.time("aplicarAprocesosAHommeApp");
+    const aprocStats = countAprocesosStats();
+    logStep(
+      "Aprocesos acumulado",
+      `owners=${aprocStats.owners} | combos=${aprocStats.combos} | pos=${aprocStats.pos} | neg=${aprocStats.neg}`
+    );
+
+    const s4 = Date.now();
     await aplicarAprocesosAHommeApp(conn);
-    console.timeEnd("aplicarAprocesosAHommeApp");
+    logStep("aplicarAprocesosAHommeApp:done", `elapsed=${hrMs(s4)}ms`);
+
+    logStep(
+      "pendientesHoy:end",
+      `fetched=${rows.length} | processedIds=${idsProcesados.length} | elapsed=${hrMs(globalStartedAt)}ms`
+    );
 
     return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
   } catch (err) {
@@ -733,53 +1001,7 @@ async function pendientesHoy() {
   }
 }
 
-// ----------------- Runner histórico por volumen (sin cortar por fecha) -----------------
-async function procesarHistoricoDesdeEnero() {
-  if (PENDIENTES_HOY_RUNNING) {
-    console.log("⏭️ Ya hay una corrida en curso, salteo");
-    return { ok: true, skipped: true };
-  }
-
-  const resumen = {
-    ok: true,
-    batches: 0,
-    fetched: 0,
-    processedIds: 0
-  };
-
-  for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
-    console.log(`\n📦 Batch ${i + 1}/${MAX_BATCHES_PER_RUN} | FETCH=${FETCH}`);
-
-    const r = await pendientesHoy();
-
-    if (!r || r.skipped) {
-      resumen.skipped = true;
-      break;
-    }
-
-    if (r.empty || !r.fetched) {
-      console.log("✅ No quedan registros pendientes para procesar");
-      break;
-    }
-
-    resumen.batches += 1;
-    resumen.fetched += Number(r.fetched || 0);
-    resumen.processedIds += Number(r.processedIds || 0);
-
-    if (r.fetched < FETCH) {
-      console.log("✅ Último batch parcial, no quedan más pendientes inmediatos");
-      break;
-    }
-  }
-
-  return resumen;
-}
-
 // NO ejecutar automáticamente al importar
 // pendientesHoy();
-// procesarHistoricoDesdeEnero();
 
-module.exports = {
-  pendientesHoy,
-  procesarHistoricoDesdeEnero
-};
+module.exports = { pendientesHoy };
