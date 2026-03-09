@@ -122,7 +122,7 @@ async function main() {
     async function actualizarEmpresas() {
         try {
             empresasDB = (await getFromRedis("empresasData")) || null;
-            console.log("✅ [JOBS] Empresas actualizadas desde Redis");
+            //    console.log("✅ [JOBS] Empresas actualizadas desde Redis");
         } catch (e) {
             console.error("❌ [JOBS] Error al actualizar empresas desde Redis:", e?.message || e);
             empresasDB = null;
@@ -151,21 +151,21 @@ async function main() {
 
     async function procesarEmpresaCdc(didOwner, workerId) {
         try {
-            console.log(`🔁 [CDC][W${workerId}] Empresa ${didOwner}: asignacion...`);
+            //   console.log(`🔁 [CDC][W${workerId}] Empresa ${didOwner}: asignacion...`);
             await withTimeout(
                 Promise.resolve().then(() => EnviarcdAsignacion(didOwner)),
                 CDC_TIMEOUT,
                 `CDC asignacion ${didOwner}`
             );
 
-            console.log(`🔁 [CDC][W${workerId}] Empresa ${didOwner}: estado...`);
+            // console.log(`🔁 [CDC][W${workerId}] Empresa ${didOwner}: estado...`);
             await withTimeout(
                 Promise.resolve().then(() => EnviarcdcEstado(didOwner)),
                 CDC_TIMEOUT,
                 `CDC estado ${didOwner}`
             );
 
-            console.log(`✅ [CDC][W${workerId}] Empresa ${didOwner}: OK`);
+            // console.log(`✅ [CDC][W${workerId}] Empresa ${didOwner}: OK`);
         } catch (e) {
             console.error(`❌ [CDC][W${workerId}] Empresa ${didOwner}:`, e?.message || e);
         }
@@ -176,17 +176,17 @@ async function main() {
         const didOwners = obtenerDidOwners();
 
         if (!didOwners.length) {
-            console.log("⚠️ [CDC] No se encontraron empresas.");
+            //   console.log("⚠️ [CDC] No se encontraron empresas.");
             return;
         }
 
-        console.log(`🚀 [CDC] Procesando ${didOwners.length} empresas con concurrency=${CDC_CONCURRENCY}`);
+        // console.log(`🚀 [CDC] Procesando ${didOwners.length} empresas con concurrency=${CDC_CONCURRENCY}`);
         const startedAt = Date.now();
 
         await runWithConcurrency(didOwners, CDC_CONCURRENCY, procesarEmpresaCdc);
 
         const elapsedMs = Date.now() - startedAt;
-        console.log(`✅ [CDC] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
+        //console.log(`✅ [CDC] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
     }
 
     async function runEnviosUnaVez() {
@@ -204,16 +204,16 @@ async function main() {
             const elapsedMs = Date.now() - startedAt;
 
             if (!stats) {
-                console.log(`✅ [ENVIOS] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
+                //   console.log(`✅ [ENVIOS] Finalizado en ${(elapsedMs / 1000).toFixed(1)}s`);
                 return;
             }
 
             const mins = Math.max((stats.elapsedMs || elapsedMs || 1) / 60000, 1 / 60000);
             const enviosMin = Number((stats.envios / mins).toFixed(1));
 
-            console.log(
-                `✅ [ENVIOS] Completado — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${((stats.elapsedMs || elapsedMs) / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
-            );
+            //   console.log(
+            //     `✅ [ENVIOS] Completado — envios=${stats.envios}, asig=${stats.asignaciones}, estados=${stats.estados}, elim=${stats.eliminaciones}, empresas=${stats.empresas}, tiempo=${((stats.elapsedMs || elapsedMs) / 1000).toFixed(1)}s, ≈ ${enviosMin} envios/min`
+            //);
         } catch (e) {
             console.error("❌ [ENVIOS] Error:", e?.message || e);
         }
