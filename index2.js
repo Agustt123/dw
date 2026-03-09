@@ -52,7 +52,7 @@ async function startJobs() {
     const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
     const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
     const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
-    const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
+    const { pendientesHoy, procesarHistoricoDesdeEnero } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
 
@@ -141,7 +141,7 @@ async function startJobs() {
         runningPend = true;
         try {
             // Importante: timeout < intervalo para ritmo sano
-            await withTimeout(pendientesHoy(), 25000, "pendientesHoy");
+            await withTimeout(procesarHistoricoDesdeEnero(), 250000, "pendientesHoy");
         } catch (e) {
             console.error("❌ [JOBS] Error en pendientesHoy:", e?.message || e);
         } finally {
