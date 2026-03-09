@@ -12,8 +12,8 @@ const ESTADO_ANY_EVENTO = 998; // existió en el día del evento
 const TZ = "America/Argentina/Buenos_Aires";
 
 // Tunables
-const FETCH = Number(process.env.PENDIENTES_FETCH || 5000);
-const LOOKUP_CHUNK = Number(process.env.PENDIENTES_LOOKUP_CHUNK || 500);
+const FETCH = Number(process.env.PENDIENTES_FETCH || 2000);
+const LOOKUP_CHUNK = Number(process.env.PENDIENTES_LOOKUP_CHUNK || 200);
 const COMMIT_EVERY = Number(process.env.PENDIENTES_COMMIT_EVERY || 300);
 const LOOP_PAUSE_MS = Number(process.env.PENDIENTES_LOOP_PAUSE_MS || 50);
 const SLOW_BATCH_MS = Number(process.env.PENDIENTES_SLOW_BATCH_MS || 30000);
