@@ -148,7 +148,7 @@ async function sincronizarEnviosBatchParaEmpresa(
             connEmpresaBad = true;
         }
 
-        console.error(`❌ Error procesando empresa ${didOwner}:`, error?.message || error);
+        //  console.error(`❌ Error procesando empresa ${didOwner}:`, error?.message || error);
     } finally {
         if (!connEmpresa) return;
 
