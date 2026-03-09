@@ -190,66 +190,66 @@ async function startJobs() {
         }, 60 * 1000);
 
         // Pendientes cada 30s (antes estaba 15s)
-        setInterval(() => {
-            runPendientesFixed().catch(() => { });
-        }, 30 * 1000);
-    }
+        /*    setInterval(() => {
+                runPendientesFixed().catch(() => { });
+            }, 30 * 1000);
+        }*/
 
-    console.log("✅ [JOBS] Iniciando jobs...");
-    await actualizarEmpresas();
+        console.log("✅ [JOBS] Iniciando jobs...");
+        await actualizarEmpresas();
 
-    iniciarSchedulers();
-    startMonitoreoJob();
-    startMonitoreoMetricas();
+        iniciarSchedulers();
+        startMonitoreoJob();
+        startMonitoreoMetricas();
 
-    process.on("SIGINT", async () => {
-        console.log("🛑 [JOBS] Cerrando...");
-        try { await redisClient.disconnect(); } catch { }
-        try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
-        process.exit();
-    });
-
-    process.on("unhandledRejection", (reason) => console.error("❌ [JOBS] unhandledRejection:", reason));
-    process.on("uncaughtException", (err) => console.error("❌ [JOBS] uncaughtException:", err));
-}
-
-// =========================
-// Bootstrap único
-// =========================
-(async () => {
-    try {
-        if (isJobsChild) {
-            // child process: solo jobs
-            await startJobs();
-            return;
-        }
-
-        // proceso principal: API + spawnea jobs
-        startApi();
-
-        // Spawn de jobs desde el mismo archivo
-        const child = fork(__filename, ["--jobs-child"], {
-            stdio: "inherit", // IMPORTANTÍSIMO: logs del child salen en pm2 logs
-            env: process.env,
-        });
-
-        child.on("exit", (code, signal) => {
-            console.error(`❌ [JOBS] Proceso hijo terminó (code=${code}, signal=${signal}). Lo reinicio...`);
-            // reinicio simple
-            setTimeout(() => {
-                fork(__filename, ["--jobs-child"], { stdio: "inherit", env: process.env });
-            }, 2000);
-        });
-
-        process.on("SIGINT", () => {
-            console.log("🛑 [API] Cerrando...");
-            try { child.kill("SIGINT"); } catch { }
+        process.on("SIGINT", async () => {
+            console.log("🛑 [JOBS] Cerrando...");
+            try { await redisClient.disconnect(); } catch { }
+            try { if (typeof closeDWPool === "function") await closeDWPool(); } catch { }
             process.exit();
         });
 
-        process.on("unhandledRejection", (reason) => console.error("❌ [API] unhandledRejection:", reason));
-        process.on("uncaughtException", (err) => console.error("❌ [API] uncaughtException:", err));
-    } catch (err) {
-        console.error("❌ Error al iniciar:", err?.message || err);
+        process.on("unhandledRejection", (reason) => console.error("❌ [JOBS] unhandledRejection:", reason));
+        process.on("uncaughtException", (err) => console.error("❌ [JOBS] uncaughtException:", err));
     }
-})();
+
+    // =========================
+    // Bootstrap único
+    // =========================
+    (async () => {
+        try {
+            if (isJobsChild) {
+                // child process: solo jobs
+                await startJobs();
+                return;
+            }
+
+            // proceso principal: API + spawnea jobs
+            startApi();
+
+            // Spawn de jobs desde el mismo archivo
+            const child = fork(__filename, ["--jobs-child"], {
+                stdio: "inherit", // IMPORTANTÍSIMO: logs del child salen en pm2 logs
+                env: process.env,
+            });
+
+            child.on("exit", (code, signal) => {
+                console.error(`❌ [JOBS] Proceso hijo terminó (code=${code}, signal=${signal}). Lo reinicio...`);
+                // reinicio simple
+                setTimeout(() => {
+                    fork(__filename, ["--jobs-child"], { stdio: "inherit", env: process.env });
+                }, 2000);
+            });
+
+            process.on("SIGINT", () => {
+                console.log("🛑 [API] Cerrando...");
+                try { child.kill("SIGINT"); } catch { }
+                process.exit();
+            });
+
+            process.on("unhandledRejection", (reason) => console.error("❌ [API] unhandledRejection:", reason));
+            process.on("uncaughtException", (err) => console.error("❌ [API] uncaughtException:", err));
+        } catch (err) {
+            console.error("❌ Error al iniciar:", err?.message || err);
+        }
+    })();
