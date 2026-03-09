@@ -11,15 +11,24 @@ const ESTADO_ANY_EVENTO = 998;
 
 const TZ = "America/Argentina/Buenos_Aires";
 
+// Ajustá esto según presión de BD / RAM
+const FETCH = Number(process.env.PENDIENTES_FETCH || 1000);
+const MAX_BATCHES_PER_RUN = Number(process.env.PENDIENTES_MAX_BATCHES || 200);
+const COMBO_PRELOAD_CHUNK = Number(process.env.PENDIENTES_COMBO_PRELOAD_CHUNK || 250);
+const IDS_UPDATE_CHUNK = Number(process.env.PENDIENTES_IDS_UPDATE_CHUNK || 5000);
+const COMMIT_EVERY = Number(process.env.PENDIENTES_COMMIT_EVERY || 200);
+
+const dayFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
+
 function getDiaFromTS(ts) {
   const d = new Date(ts);
   const ok = isNaN(d.getTime()) ? new Date() : d;
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(ok);
+  return dayFormatter.format(ok);
 }
 
 const nEstado = (v) => {
@@ -27,7 +36,7 @@ const nEstado = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-// ----------------- Cache en memoria (GLOBAL POR CORRIDA) -----------------
+// ----------------- Cache en memoria (GLOBAL POR CORRIDA / BATCH) -----------------
 // key: "owner|cliente|chofer|estado|dia"
 const homeAppCache = new Map();
 const dirtyHomeAppKeys = new Set();
@@ -46,9 +55,11 @@ const makePrevKey = (owner, envio) => `${owner}|${envio}`;
 function parseCSVToSet(s) {
   const set = new Set();
   if (!s || !String(s).trim()) return set;
+
   for (const x of String(s).split(",").map(t => t.trim()).filter(Boolean)) {
     set.add(x);
   }
+
   return set;
 }
 
@@ -135,7 +146,7 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   entry.dirty = false;
 }
 
-// ----------------- Reset por corrida -----------------
+// ----------------- Reset por corrida/batch -----------------
 function resetState() {
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
@@ -147,8 +158,8 @@ function resetState() {
 }
 
 // ----------------- Helpers -----------------
-function ensure(o, k) {
-  return (o[k] ??= {});
+function ensure(o, k, factory = () => ({})) {
+  return (o[k] ??= factory());
 }
 
 // NO más didOwner=0
@@ -162,16 +173,12 @@ function pushNodo(owner, cli, cho, est, dia, tipo, envio) {
   ensure(Aprocesos[owner], cli);
   ensure(Aprocesos[owner][cli], cho);
   ensure(Aprocesos[owner][cli][cho], est);
-  ensure(Aprocesos[owner][cli][cho][est], dia);
+  ensure(Aprocesos[owner][cli][cho][est], dia, () => ({
+    0: new Set(),
+    1: new Set()
+  }));
 
-  if (!Aprocesos[owner][cli][cho][est][dia][1]) {
-    Aprocesos[owner][cli][cho][est][dia][1] = [];
-  }
-  if (!Aprocesos[owner][cli][cho][est][dia][0]) {
-    Aprocesos[owner][cli][cho][est][dia][0] = [];
-  }
-
-  Aprocesos[owner][cli][cho][est][dia][tipo].push(String(envio));
+  Aprocesos[owner][cli][cho][est][dia][tipo].add(String(envio));
 }
 
 // ----------------- Prev desde HOME_APP (con memo) -----------------
@@ -259,18 +266,18 @@ async function preloadPrevChoferes(conn, rows) {
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
   for (const row of rows) {
-    const OW = row.didOwner;
-    const CLI = row.didCliente ?? 0;
+    const OW = Number(row.didOwner);
+    const CLI = Number(row.didCliente ?? 0);
     const EST = nEstado(row.estado);
 
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
-    const diaEvento = getDiaFromTS(row.fecha);
+    const diaEvento = dia;
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
     const envio = String(row.didPaquete);
-    const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
+    const CHO = EST === 0 ? (Number(row.quien) || 0) : (Number(row.didChofer) || 0);
 
     // prev desde home_app (con memo)
     const prevRows = await getPrevFromHomeApp(connection, OW, envio);
@@ -280,6 +287,8 @@ async function buildAprocesosEstado(rows, connection) {
       const PREV_CHO = Number(prev.didChofer) || 0;
       const PREV_CLI = Number(prev.didCliente) || 0;
       const PREV_DIA = prev.dia || dia;
+
+      if (PREV_EST === null) continue;
 
       // negativos previos
       pushNodoConGlobal(OW, 0, 0, PREV_EST, PREV_DIA, 0, envio);
@@ -370,16 +379,16 @@ async function buildAprocesosAsignaciones(conn, rows) {
   await preloadPrevChoferes(conn, rows);
 
   for (const row of rows) {
-    const OW = row.didOwner;
-    const CLI = row.didCliente ?? 0;
-    const CHO = row.didChofer ?? 0;
+    const OW = Number(row.didOwner);
+    const CLI = Number(row.didCliente ?? 0);
+    const CHO = Number(row.didChofer ?? 0);
     const EST = nEstado(row.estado);
     const envio = String(row.didPaquete);
 
     if (!OW || EST === null) continue;
 
     const dia = getDiaFromTS(row.fecha);
-    const diaEvento = getDiaFromTS(row.fecha);
+    const diaEvento = dia;
     const diaPaquete = row.fecha_inicio ? getDiaFromTS(row.fecha_inicio) : diaEvento;
 
     if (CHO !== 0) {
@@ -453,9 +462,105 @@ async function buildAprocesosAsignaciones(conn, rows) {
   return Aprocesos;
 }
 
+// ----------------- Precarga batch de combos de home_app -----------------
+function collectComboKeysFromAprocesos() {
+  const keys = [];
+
+  for (const ownerKey in Aprocesos) {
+    const porCliente = Aprocesos[ownerKey];
+
+    for (const clienteKey in porCliente) {
+      const porChofer = porCliente[clienteKey];
+
+      for (const choferKey in porChofer) {
+        const porEstado = porChofer[choferKey];
+
+        for (const estadoKey in porEstado) {
+          const porDia = porEstado[estadoKey];
+
+          for (const dia in porDia) {
+            const nodo = porDia[dia];
+            const pos = nodo?.[1];
+            const neg = nodo?.[0];
+
+            if ((!pos || pos.size === 0) && (!neg || neg.size === 0)) continue;
+
+            keys.push({
+              owner: Number(ownerKey),
+              cliente: Number(clienteKey),
+              chofer: Number(choferKey),
+              estado: Number(estadoKey),
+              dia
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return keys;
+}
+
+async function preloadHomeAppCombos(conn) {
+  const keys = collectComboKeysFromAprocesos();
+  if (!keys.length) return;
+
+  for (let i = 0; i < keys.length; i += COMBO_PRELOAD_CHUNK) {
+    const chunk = keys.slice(i, i + COMBO_PRELOAD_CHUNK);
+
+    const conditions = [];
+    const params = [];
+
+    for (const k of chunk) {
+      const cacheKey = makeKey(k.owner, k.cliente, k.chofer, k.estado, k.dia);
+      if (homeAppCache.has(cacheKey)) continue;
+
+      conditions.push("(didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?)");
+      params.push(k.owner, k.cliente, k.chofer, k.estado, k.dia);
+    }
+
+    if (!conditions.length) continue;
+
+    const q = `
+      SELECT didOwner, didCliente, didChofer, estado, dia, didsPaquete, didsPaquetes_cierre
+      FROM home_app
+      WHERE ${conditions.join(" OR ")}
+    `;
+
+    const rows = await executeQuery(conn, q, params);
+
+    for (const row of rows) {
+      const key = makeKey(
+        Number(row.didOwner),
+        Number(row.didCliente),
+        Number(row.didChofer),
+        Number(row.estado),
+        row.dia
+      );
+
+      homeAppCache.set(key, {
+        historial: parseCSVToSet(row.didsPaquete),
+        cierre: parseCSVToSet(row.didsPaquetes_cierre),
+        dirty: false
+      });
+    }
+
+    // completar faltantes para evitar hits posteriores
+    for (const k of chunk) {
+      const cacheKey = makeKey(k.owner, k.cliente, k.chofer, k.estado, k.dia);
+      if (!homeAppCache.has(cacheKey)) {
+        homeAppCache.set(cacheKey, {
+          historial: new Set(),
+          cierre: new Set(),
+          dirty: false
+        });
+      }
+    }
+  }
+}
+
 // ----------------- Flush diferido de home_app -----------------
 async function flushDirtyHomeApp(conn) {
-  const COMMIT_EVERY = 300;
   let ops = 0;
 
   const begin = async () => executeQuery(conn, "START TRANSACTION");
@@ -499,6 +604,9 @@ async function flushDirtyHomeApp(conn) {
 
 // ----------------- Aplicar batch (cache + flush diferido) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
+  // Precarga de combos a tocar para bajar queries 1x1
+  await preloadHomeAppCombos(conn);
+
   for (const ownerKey in Aprocesos) {
     const owner = Number(ownerKey);
     const porCliente = Aprocesos[ownerKey];
@@ -517,8 +625,8 @@ async function aplicarAprocesosAHommeApp(conn) {
 
           for (const dia in porDia) {
             const nodo = porDia[dia];
-            const pos = [...new Set(nodo?.[1] || [])];
-            const neg = [...new Set(nodo?.[0] || [])];
+            const pos = [...(nodo?.[1] || new Set())];
+            const neg = [...(nodo?.[0] || new Set())];
 
             if (!pos.length && !neg.length) continue;
 
@@ -535,10 +643,8 @@ async function aplicarAprocesosAHommeApp(conn) {
 
   // Marcar CDC como procesado
   if (idsProcesados.length > 0) {
-    const CHUNK = 1000;
-
-    for (let i = 0; i < idsProcesados.length; i += CHUNK) {
-      const slice = idsProcesados.slice(i, i + CHUNK);
+    for (let i = 0; i < idsProcesados.length; i += IDS_UPDATE_CHUNK) {
+      const slice = idsProcesados.slice(i, i + IDS_UPDATE_CHUNK);
       const updCdc = `
         UPDATE cdc
         SET procesado=1, fProcesado=NOW()
@@ -549,7 +655,7 @@ async function aplicarAprocesosAHommeApp(conn) {
   }
 }
 
-// ----------------- Batch principal -----------------
+// ----------------- Un batch -----------------
 let PENDIENTES_HOY_RUNNING = false;
 
 async function pendientesHoy() {
@@ -565,8 +671,6 @@ async function pendientesHoy() {
   let fatalErr = null;
 
   try {
-    const FETCH = 10000;
-
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
       FROM cdc
@@ -580,6 +684,10 @@ async function pendientesHoy() {
     console.time("selectCDC");
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
     console.timeEnd("selectCDC");
+
+    if (!rows.length) {
+      return { ok: true, fetched: 0, processedIds: 0, empty: true };
+    }
 
     const rowsEstado = rows.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
@@ -623,7 +731,53 @@ async function pendientesHoy() {
   }
 }
 
+// ----------------- Runner histórico por volumen (sin cortar por fecha) -----------------
+async function procesarHistoricoDesdeEnero() {
+  if (PENDIENTES_HOY_RUNNING) {
+    console.log("⏭️ Ya hay una corrida en curso, salteo");
+    return { ok: true, skipped: true };
+  }
+
+  const resumen = {
+    ok: true,
+    batches: 0,
+    fetched: 0,
+    processedIds: 0
+  };
+
+  for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
+    console.log(`\n📦 Batch ${i + 1}/${MAX_BATCHES_PER_RUN} | FETCH=${FETCH}`);
+
+    const r = await pendientesHoy();
+
+    if (!r || r.skipped) {
+      resumen.skipped = true;
+      break;
+    }
+
+    if (r.empty || !r.fetched) {
+      console.log("✅ No quedan registros pendientes para procesar");
+      break;
+    }
+
+    resumen.batches += 1;
+    resumen.fetched += Number(r.fetched || 0);
+    resumen.processedIds += Number(r.processedIds || 0);
+
+    if (r.fetched < FETCH) {
+      console.log("✅ Último batch parcial, no quedan más pendientes inmediatos");
+      break;
+    }
+  }
+
+  return resumen;
+}
+
 // NO ejecutar automáticamente al importar
 // pendientesHoy();
+// procesarHistoricoDesdeEnero();
 
-module.exports = { pendientesHoy };
+module.exports = {
+  pendientesHoy,
+  procesarHistoricoDesdeEnero
+};

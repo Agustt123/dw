@@ -94,7 +94,7 @@ async function sincronizarEnviosBatchParaEmpresa(
     columnasEstadosDW,
     metrics
 ) {
-    console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
+    //  console.log(`🔄 Sincronizando batch para empresa ${didOwner}`);
 
     let connEmpresa = null;
     let connEmpresaBad = false;
@@ -133,7 +133,7 @@ async function sincronizarEnviosBatchParaEmpresa(
             }
         }
 
-        console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
+        //  console.log(`✅ Batch sincronizado para empresa ${didOwner}`);
     } catch (error) {
         const msg = String(error?.message || error).toLowerCase();
         const code = error?.code;

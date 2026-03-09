@@ -39,7 +39,7 @@ let companiesList = {};
 async function getConnection(idempresa) {
     let connection;
     try {
-        console.log("🔄 idempresa recibido:", idempresa);
+        //    console.log("🔄 idempresa recibido:", idempresa);
 
         if (typeof idempresa !== "string" && typeof idempresa !== "number") {
             throw new Error(`idempresa debe ser string o number, recibido: ${typeof idempresa}`);

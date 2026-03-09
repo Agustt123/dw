@@ -190,7 +190,7 @@ async function main() {
     }
 
     async function runEnviosUnaVez() {
-        console.log("🚀 [ENVIOS] Iniciando sincronizacion...");
+        //  console.log("🚀 [ENVIOS] Iniciando sincronizacion...");
 
         const startedAt = Date.now();
 
@@ -339,7 +339,7 @@ async function main() {
         }
 
         runningEnvios = true;
-        console.log("🔁 [JOBS] Envios: iniciando sincronizacion...");
+        //   console.log("🔁 [JOBS] Envios: iniciando sincronizacion...");
 
         try {
             const stats = await withTimeout(
