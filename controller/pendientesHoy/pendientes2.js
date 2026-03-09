@@ -3,6 +3,7 @@ const { executeQuery, getConnectionLocalPendientes } = require("../../db");
 // ----------------- Config -----------------
 const Aprocesos = {};
 const idsProcesados = [];
+const idsProcesados9 = [];
 
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
@@ -171,6 +172,7 @@ function createMetrics() {
     totalApplyOps: 0,
     totalFlushes: 0,
     totalMarkedProcessed: 0,
+    totalMarked9: 0,
     totalPreloadEstadoPairs: 0,
     totalPreloadChoferPairs: 0,
     maxBatchMs: 0,
@@ -183,8 +185,10 @@ function logBatchSummary(batchMetrics, totals) {
 
   console.log(
     `📦 [LOTE ${batchMetrics.batchNo}] fetched=${fmtNum(batchMetrics.fetched)} ` +
+    `nullCliente=${fmtNum(batchMetrics.rowsDidClienteNull || 0)} ` +
     `estado=${fmtNum(batchMetrics.rowsEstado)} asignaciones=${fmtNum(batchMetrics.rowsAsignaciones)} ` +
-    `processed=${fmtNum(batchMetrics.processedIds)} applyOps=${fmtNum(batchMetrics.applyOps)} flushes=${fmtNum(batchMetrics.flushes)} ` +
+    `processed=${fmtNum(batchMetrics.processedIds)} marked9=${fmtNum(batchMetrics.marked9 || 0)} ` +
+    `applyOps=${fmtNum(batchMetrics.applyOps)} flushes=${fmtNum(batchMetrics.flushes)} ` +
     `lastId=${batchMetrics.lastId} total=${fmtMs(batchMetrics.totalMs)} ${slowMark}`
   );
 
@@ -203,6 +207,7 @@ function logBatchSummary(batchMetrics, totals) {
   console.log(
     `   📊 total | batches=${fmtNum(totals.batchNo)} fetched=${fmtNum(totals.totalFetched)} ` +
     `processed=${fmtNum(totals.totalProcessed)} marked=${fmtNum(totals.totalMarkedProcessed)} ` +
+    `marked9=${fmtNum(totals.totalMarked9)} ` +
     `avgProcessed/s=${rate(totals.totalProcessed, nowMs() - totals.totalStartMs)}`
   );
 
@@ -305,6 +310,7 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
 function resetState() {
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
+  idsProcesados9.length = 0;
   homeAppCache.clear();
 }
 
@@ -685,14 +691,32 @@ async function aplicarAprocesosAHomeApp(conn, batchMetrics) {
     }
   }
 
+  if (idsProcesados9.length > 0) {
+    const CHUNK = 1000;
+
+    for (let i = 0; i < idsProcesados9.length; i += CHUNK) {
+      const slice = idsProcesados9.slice(i, i + CHUNK);
+
+      const updCdc9 = `
+        UPDATE cdc
+        SET procesado = 9, fProcesado = NOW()
+        WHERE id IN (${slice.map(() => "?").join(",")})
+      `;
+
+      await executeQuery(conn, updCdc9, slice);
+    }
+  }
+
   batchMetrics.applyOps = ops;
   batchMetrics.flushes = flushes;
   batchMetrics.markedProcessed = idsProcesados.length;
+  batchMetrics.marked9 = idsProcesados9.length;
 
   return {
     ops,
     flushes,
     markedProcessed: idsProcesados.length,
+    marked9: idsProcesados9.length,
   };
 }
 
@@ -705,6 +729,7 @@ async function procesarLote(conn, totals) {
     fetched: 0,
     rowsEstado: 0,
     rowsAsignaciones: 0,
+    rowsDidClienteNull: 0,
     processedIds: 0,
     lastId: null,
     selectMs: 0,
@@ -717,6 +742,7 @@ async function procesarLote(conn, totals) {
     applyOps: 0,
     flushes: 0,
     markedProcessed: 0,
+    marked9: 0,
   };
 
   const lotStart = nowMs();
@@ -726,14 +752,14 @@ async function procesarLote(conn, totals) {
     const t = nowMs();
 
     const selectCDC = `
-  SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
-  FROM cdc FORCE INDEX (idx_cdc_procesado_ejecutar_id)
-  WHERE procesado = 0
-    AND ejecutar IN ("estado", "asignaciones")
-    AND didCliente IS NOT NULL
-  ORDER BY id ASC
-  LIMIT ?
-`;
+      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
+      FROM cdc FORCE INDEX (idx_cdc_procesado_ejecutar_id)
+      WHERE procesado = 0
+        AND ejecutar IN ("estado", "asignaciones")
+      ORDER BY id ASC
+      LIMIT ?
+    `;
+
     batchMetrics.rows = await executeQuery(conn, selectCDC, [FETCH]);
     batchMetrics.selectMs = nowMs() - t;
   }
@@ -749,8 +775,20 @@ async function procesarLote(conn, totals) {
   batchMetrics.fetched = rows.length;
   batchMetrics.lastId = rows[rows.length - 1]?.id || null;
 
-  const rowsEstado = rows.filter((r) => r.disparador === "estado");
-  const rowsAsignaciones = rows.filter((r) => r.disparador === "asignaciones");
+  const rowsValidas = [];
+
+  for (const row of rows) {
+    if (row.didCliente == null) {
+      idsProcesados9.push(row.id);
+      batchMetrics.rowsDidClienteNull += 1;
+      continue;
+    }
+
+    rowsValidas.push(row);
+  }
+
+  const rowsEstado = rowsValidas.filter((r) => r.disparador === "estado");
+  const rowsAsignaciones = rowsValidas.filter((r) => r.disparador === "asignaciones");
 
   batchMetrics.rowsEstado = rowsEstado.length;
   batchMetrics.rowsAsignaciones = rowsAsignaciones.length;
@@ -807,6 +845,7 @@ async function procesarLote(conn, totals) {
   totals.totalApplyOps += batchMetrics.applyOps;
   totals.totalFlushes += batchMetrics.flushes;
   totals.totalMarkedProcessed += batchMetrics.markedProcessed;
+  totals.totalMarked9 += batchMetrics.marked9;
   totals.maxBatchMs = Math.max(totals.maxBatchMs, batchMetrics.totalMs);
 
   if (totals.minBatchMs === null || batchMetrics.totalMs < totals.minBatchMs) {
@@ -858,7 +897,8 @@ async function pendientesHoy() {
       `📊 RESUMEN FINAL | batches=${fmtNum(totals.batchNo)} fetched=${fmtNum(totals.totalFetched)} ` +
       `processed=${fmtNum(totals.totalProcessed)} estado=${fmtNum(totals.totalEstadoRows)} ` +
       `asignaciones=${fmtNum(totals.totalAsignacionesRows)} applyOps=${fmtNum(totals.totalApplyOps)} ` +
-      `flushes=${fmtNum(totals.totalFlushes)} marked=${fmtNum(totals.totalMarkedProcessed)}`
+      `flushes=${fmtNum(totals.totalFlushes)} marked=${fmtNum(totals.totalMarkedProcessed)} ` +
+      `marked9=${fmtNum(totals.totalMarked9)}`
     );
 
     console.log(
@@ -883,6 +923,7 @@ async function pendientesHoy() {
       ok: true,
       fetched: totals.totalFetched,
       processedIds: totals.totalProcessed,
+      marked9: totals.totalMarked9,
       batches: totals.batchNo,
       elapsedMs: totalMs,
     };

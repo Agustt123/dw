@@ -47,7 +47,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-UPDATE clientes SET didDeposito = '1' WHERE superado=0 and elim=0;
+ALTER TABLE clientes CHANGE didDeposito didDeposito VARCHAR(10) NULL DEFAULT NULL;
 
 
         `;
@@ -59,7 +59,7 @@ UPDATE clientes SET didDeposito = '1' WHERE superado=0 and elim=0;
 
 
 
-            if (didOwner === 275 || didOwner === 276 || didOwner === 345 || didOwner === 223) continue;
+            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
 
             const conn = await getConnection(didOwner);
             try {
@@ -269,7 +269,7 @@ async function contarEnviosTodasEmpresas() {
 
 
 async function main() {
-    await contarEnviosTodasEmpresas();
+    await corregirFechasHistorialTodasEmpresas();
 }
 
 main();
