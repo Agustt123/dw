@@ -26,7 +26,7 @@ async function sincronizarEnviosUnaVez() {
         const didOwners = Object.keys(empresaData);
 
         if (!didOwners.length) {
-            console.log("⚠️ No hay empresas para sincronizar envíos.");
+            //  console.log("⚠️ No hay empresas para sincronizar envíos.");
             return metrics;
         }
 
@@ -124,9 +124,9 @@ async function sincronizarEnviosBatchParaEmpresa(
 
             const totalMovido = movEnvios + movAsignaciones + movEstados + movEliminaciones;
 
-            console.log(
-                `[${didOwner}] vuelta ${vuelta} -> envios=${movEnvios}, asignaciones=${movAsignaciones}, estados=${movEstados}, eliminaciones=${movEliminaciones}, total=${totalMovido}`
-            );
+            // console.log(
+            //    `[${didOwner}] vuelta ${vuelta} -> envios=${movEnvios}, asignaciones=${movAsignaciones}, estados=${movEstados}, eliminaciones=${movEliminaciones}, total=${totalMovido}`
+            // );
 
             if (totalMovido === 0) {
                 break;
@@ -153,10 +153,10 @@ async function sincronizarEnviosBatchParaEmpresa(
         if (!connEmpresa) return;
 
         if (connEmpresaBad && typeof connEmpresa.destroy === "function") {
-            console.log(`[${didOwner}] 🔥 Destruyendo conexión empresa (timeout/red)`);
+            //   console.log(`[${didOwner}] 🔥 Destruyendo conexión empresa (timeout/red)`);
             connEmpresa.destroy();
         } else if (typeof connEmpresa.release === "function") {
-            console.log(`[${didOwner}] Liberando conexión empresa`);
+            //  console.log(`[${didOwner}] Liberando conexión empresa`);
             connEmpresa.release();
         } else if (typeof connEmpresa.end === "function") {
             await connEmpresa.end();
@@ -181,7 +181,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
     metrics.envios += enviosRows.length;
 
     if (enviosRows.length === 5000) {
-        console.log(`[${didOwner}] ⚠️ envios: LIMIT 5000 alcanzado (posible backlog)`);
+        //     console.log(`[${didOwner}] ⚠️ envios: LIMIT 5000 alcanzado (posible backlog)`);
     }
 
     let lastProcessedId = 0;
@@ -248,7 +248,7 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
     metrics.asignaciones += asignacionesRows.length;
 
     if (asignacionesRows.length === 5000) {
-        console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 5000 alcanzado (posible backlog)`);
+        //  console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 5000 alcanzado (posible backlog)`);
     }
 
     let lastProcessedId = 0;
@@ -370,10 +370,10 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
         );
     }
 
-    console.log(
-        `[${didOwner}] estados fetched=${historialRows.length} inserted=${inserted} lastIdAntes=${lastIdEstados} lastIdNuevo=${lastProcessedId || lastIdEstados}` +
-        (stoppedBy ? ` STOP: ${stoppedBy}` : "")
-    );
+    //  console.log(
+    //    `[${didOwner}] estados fetched=${historialRows.length} inserted=${inserted} lastIdAntes=${lastIdEstados} lastIdNuevo=${lastProcessedId || lastIdEstados}` +
+    //   (stoppedBy ? ` STOP: ${stoppedBy}` : "")
+    //);
 }
 async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     const limitParaEliminar = 5000;
@@ -393,7 +393,7 @@ async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     metrics.eliminaciones += sistemaIngresosRows.length;
 
     if (sistemaIngresosRows.length === 5000) {
-        console.log(`[${didOwner}] ⚠️ eliminaciones: LIMIT alcanzado (posible backlog)`);
+        // console.log(`[${didOwner}] ⚠️ eliminaciones: LIMIT alcanzado (posible backlog)`);
     }
 
     let maxIdEliminacion = 0;
