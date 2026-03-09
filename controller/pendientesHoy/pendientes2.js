@@ -726,15 +726,14 @@ async function procesarLote(conn, totals) {
     const t = nowMs();
 
     const selectCDC = `
-      SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
-      FROM cdc
-      WHERE procesado = 0
-        AND (ejecutar = "estado" OR ejecutar = "asignaciones")
-        AND didCliente IS NOT NULL
-      ORDER BY id ASC
-      LIMIT ?
-    `;
-
+  SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
+  FROM cdc FORCE INDEX (idx_cdc_procesado_ejecutar_id)
+  WHERE procesado = 0
+    AND ejecutar IN ("estado", "asignaciones")
+    AND didCliente IS NOT NULL
+  ORDER BY id ASC
+  LIMIT ?
+`;
     batchMetrics.rows = await executeQuery(conn, selectCDC, [FETCH]);
     batchMetrics.selectMs = nowMs() - t;
   }
