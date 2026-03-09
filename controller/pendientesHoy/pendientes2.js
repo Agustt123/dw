@@ -185,7 +185,9 @@ function logBatchSummary(batchMetrics, totals) {
 
   console.log(
     `📦 [LOTE ${batchMetrics.batchNo}] fetched=${fmtNum(batchMetrics.fetched)} ` +
+    `descartados9=${fmtNum(batchMetrics.rowsDiscarded || 0)} ` +
     `nullCliente=${fmtNum(batchMetrics.rowsDidClienteNull || 0)} ` +
+    `ejecutarInvalido=${fmtNum(batchMetrics.rowsEjecutarInvalido || 0)} ` +
     `estado=${fmtNum(batchMetrics.rowsEstado)} asignaciones=${fmtNum(batchMetrics.rowsAsignaciones)} ` +
     `processed=${fmtNum(batchMetrics.processedIds)} marked9=${fmtNum(batchMetrics.marked9 || 0)} ` +
     `applyOps=${fmtNum(batchMetrics.applyOps)} flushes=${fmtNum(batchMetrics.flushes)} ` +
@@ -314,6 +316,10 @@ function resetState() {
   homeAppCache.clear();
 }
 
+function esEjecutarValido(v) {
+  return v === "estado" || v === "asignaciones";
+}
+
 // ----------------- Builders base -----------------
 function pushNodoConGlobal(owner, cli, cho, est, dia, tipo, envio) {
   pushNodo(owner, cli, cho, est, dia, tipo, envio);
@@ -356,7 +362,6 @@ async function preloadPrevEstadosDesdeCDC(conn, rowsEstado) {
         SELECT didOwner, didPaquete, MAX(id) AS maxId
         FROM cdc
         WHERE id < ?
-          AND didCliente IS NOT NULL
           AND (ejecutar = "estado" OR ejecutar = "asignaciones")
           AND (${sql})
         GROUP BY didOwner, didPaquete
@@ -730,6 +735,8 @@ async function procesarLote(conn, totals) {
     rowsEstado: 0,
     rowsAsignaciones: 0,
     rowsDidClienteNull: 0,
+    rowsEjecutarInvalido: 0,
+    rowsDiscarded: 0,
     processedIds: 0,
     lastId: null,
     selectMs: 0,
@@ -753,9 +760,8 @@ async function procesarLote(conn, totals) {
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha, fecha_inicio
-      FROM cdc FORCE INDEX (idx_cdc_procesado_ejecutar_id)
+      FROM cdc
       WHERE procesado = 0
-        AND ejecutar IN ("estado", "asignaciones")
       ORDER BY id ASC
       LIMIT ?
     `;
@@ -781,6 +787,14 @@ async function procesarLote(conn, totals) {
     if (row.didCliente == null) {
       idsProcesados9.push(row.id);
       batchMetrics.rowsDidClienteNull += 1;
+      batchMetrics.rowsDiscarded += 1;
+      continue;
+    }
+
+    if (!esEjecutarValido(row.ejecutar)) {
+      idsProcesados9.push(row.id);
+      batchMetrics.rowsEjecutarInvalido += 1;
+      batchMetrics.rowsDiscarded += 1;
       continue;
     }
 
@@ -790,14 +804,24 @@ async function procesarLote(conn, totals) {
   const rowsEstado = rowsValidas.filter((r) => r.disparador === "estado");
   const rowsAsignaciones = rowsValidas.filter((r) => r.disparador === "asignaciones");
 
-  batchMetrics.rowsEstado = rowsEstado.length;
-  batchMetrics.rowsAsignaciones = rowsAsignaciones.length;
+  for (const row of rowsValidas) {
+    if (row.disparador !== "estado" && row.disparador !== "asignaciones") {
+      idsProcesados9.push(row.id);
+      batchMetrics.rowsDiscarded += 1;
+    }
+  }
+
+  const rowsEstadoFinal = rowsEstado;
+  const rowsAsignacionesFinal = rowsAsignaciones;
+
+  batchMetrics.rowsEstado = rowsEstadoFinal.length;
+  batchMetrics.rowsAsignaciones = rowsAsignacionesFinal.length;
 
   // PRELOAD ESTADO
   let prevStateMap;
   {
     const t = nowMs();
-    prevStateMap = await preloadPrevEstadosDesdeCDC(conn, rowsEstado);
+    prevStateMap = await preloadPrevEstadosDesdeCDC(conn, rowsEstadoFinal);
     batchMetrics.preloadEstadoMs = nowMs() - t;
     totals.totalPreloadEstadoPairs += prevStateMap.size;
   }
@@ -806,7 +830,7 @@ async function procesarLote(conn, totals) {
   let prevChoferMap;
   {
     const t = nowMs();
-    prevChoferMap = await preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignaciones);
+    prevChoferMap = await preloadPrevChoferesDesdeAsignaciones(conn, rowsAsignacionesFinal);
     batchMetrics.preloadChoferMs = nowMs() - t;
     totals.totalPreloadChoferPairs += prevChoferMap.size;
   }
@@ -814,14 +838,14 @@ async function procesarLote(conn, totals) {
   // BUILD ESTADO
   {
     const t = nowMs();
-    await buildAprocesosEstado(rowsEstado, prevStateMap);
+    await buildAprocesosEstado(rowsEstadoFinal, prevStateMap);
     batchMetrics.buildEstadoMs = nowMs() - t;
   }
 
   // BUILD ASIGNACIONES
   {
     const t = nowMs();
-    await buildAprocesosAsignaciones(rowsAsignaciones, prevChoferMap);
+    await buildAprocesosAsignaciones(rowsAsignacionesFinal, prevChoferMap);
     batchMetrics.buildAsignacionesMs = nowMs() - t;
   }
 

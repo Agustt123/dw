@@ -1,4 +1,4 @@
-const { getConnection, getConnectionLocal, executeQuery, redisClient } = require("../db");
+const { getConnection, getConnectionLocal, executeQuery, redisClient, getConnectionIndividual } = require("../db");
 
 async function ejecutarQueryParaTodasLasEmpresas(query, values = []) {
     try {
@@ -47,11 +47,50 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-ALTER TABLE clientes CHANGE didDeposito didDeposito VARCHAR(10) NULL DEFAULT NULL;
-
-
-        `;
-
+ALTER
+    ALGORITHM = UNDEFINED
+    DEFINER = \`lightdat_uinsta\`@\`localhost\`
+    SQL SECURITY DEFINER
+VIEW \`lightdata_clientes\` AS
+SELECT
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` AS \`id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`nombre\` AS \`nombre\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`codigo\` AS \`codigo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`url\` AS \`url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_interno\` AS \`email_interno\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_gmaps\` AS \`maneja_mapa_gmaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_heremaps\` AS \`maneja_mapa_heremaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_cliente_id\` AS \`ml_cliente_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`emails_externos\` AS \`emails_externos\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_secret_key\` AS \`ml_secret_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_url\` AS \`ml_url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_id\` AS \`tiendanube_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_appkey\` AS \`tiendanube_appkey\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`sys_cantBloqueo\` AS \`sys_cantBloqueo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_pass\` AS \`email_pass\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_privada\` AS \`captcha_privada\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_publica\` AS \`captcha_publica\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_key\` AS \`heremaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`gmaps_key\` AS \`gmaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`woocommerce\` AS \`woocommerce\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_ml\` AS \`tiene_ml\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_tiendanube\` AS \`tiene_tiendanube\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`shopify\` AS \`shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_id\` AS \`heremaps_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`plan\` AS \`plan\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`pais\` AS \`pais\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejaCP\` AS \`manejaCP\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`fullfilment\` AS \`fullfilment\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_shopify\` AS \`metodoEnvio_shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_tn\` AS \`metodoEnvio_tn\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`choferCosto\` AS \`choferCosto\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`me1\` AS \`me1\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejoMultidepositos\` AS \`manejoMultidepositos\`
+FROM
+    \`lightdat_sistema\`.\`lightdata_clientes\`
+WHERE
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` = 375;
+`;
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
@@ -61,10 +100,11 @@ ALTER TABLE clientes CHANGE didDeposito didDeposito VARCHAR(10) NULL DEFAULT NUL
 
             if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
 
-            const conn = await getConnection(didOwner);
+            const conn = await getConnection(375);
             try {
                 await executeQuery(conn, query, []);
                 await conn.release();
+
                 console.log(`✅ Query ejecutada para empresa ${didOwner}`);
             } catch (err) {
                 await conn.release();
@@ -267,9 +307,110 @@ async function contarEnviosTodasEmpresas() {
     }
 }
 
+async function ejecutarQueryTodasEmpresasIndividual() {
+    let empresasData;
 
+    try {
+        const empresaDataStr = await redisClient.get("empresasData");
+
+        if (!empresaDataStr) {
+            console.error("❌ No se encontró 'empresasData' en Redis.");
+            return;
+        }
+
+        empresasData = JSON.parse(empresaDataStr);
+
+        const didOwners = Object.keys(empresasData); // Ej: ["2", "3", "4"]
+
+        const query = `
+ALTER
+    ALGORITHM = UNDEFINED
+    DEFINER = \`lightdat_uinsta\`@\`localhost\`
+    SQL SECURITY DEFINER
+VIEW \`lightdata_clientes\` AS
+SELECT
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` AS \`id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`nombre\` AS \`nombre\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`codigo\` AS \`codigo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`url\` AS \`url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_interno\` AS \`email_interno\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_gmaps\` AS \`maneja_mapa_gmaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_heremaps\` AS \`maneja_mapa_heremaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_cliente_id\` AS \`ml_cliente_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`emails_externos\` AS \`emails_externos\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_secret_key\` AS \`ml_secret_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_url\` AS \`ml_url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_id\` AS \`tiendanube_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_appkey\` AS \`tiendanube_appkey\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`sys_cantBloqueo\` AS \`sys_cantBloqueo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_pass\` AS \`email_pass\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_privada\` AS \`captcha_privada\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_publica\` AS \`captcha_publica\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_key\` AS \`heremaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`gmaps_key\` AS \`gmaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`woocommerce\` AS \`woocommerce\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_ml\` AS \`tiene_ml\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_tiendanube\` AS \`tiene_tiendanube\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`shopify\` AS \`shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_id\` AS \`heremaps_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`plan\` AS \`plan\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`pais\` AS \`pais\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejaCP\` AS \`manejaCP\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`fullfilment\` AS \`fullfilment\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_shopify\` AS \`metodoEnvio_shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_tn\` AS \`metodoEnvio_tn\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`choferCosto\` AS \`choferCosto\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`me1\` AS \`me1\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejoMultidepositos\` AS \`manejoMultidepositos\`
+FROM
+    \`lightdat_sistema\`.\`lightdata_clientes\`
+WHERE
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` = 375;
+`;
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+
+            if (isNaN(didOwner)) continue;
+            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
+
+            let conn = null;
+
+            try {
+                conn = await getConnectionIndividual(375);
+
+                await executeQuery(conn, query, []);
+
+                console.log(`✅ Query ejecutada para empresa ${didOwner}`);
+            } catch (err) {
+                console.error(
+                    `❌ Error ejecutando query para empresa ${didOwner}:`,
+                    err?.message || err
+                );
+            } finally {
+                try {
+                    if (conn && typeof conn.end === "function") {
+                        await conn.end();
+                    } else if (conn && typeof conn.destroy === "function") {
+                        conn.destroy();
+                    }
+                } catch (closeErr) {
+                    console.error(
+                        `⚠️ Error cerrando conexión para empresa ${didOwner}:`,
+                        closeErr?.message || closeErr
+                    );
+                }
+            }
+        }
+    } catch (err) {
+        console.error(
+            "❌ Error general en ejecutarQueryTodasEmpresasIndividual:",
+            err?.message || err
+        );
+    }
+}
 async function main() {
-    await corregirFechasHistorialTodasEmpresas();
+    await ejecutarQueryTodasEmpresasIndividual();
 }
 
 main();

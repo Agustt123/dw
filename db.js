@@ -79,7 +79,63 @@ async function getConnection(idempresa) {
         };
     }
 }
+async function getConnectionIndividual(idempresa) {
+    try {
+        //     console.log("idempresa recibido:", idempresa);
 
+        // Validación del tipo de idempresa
+        if (typeof idempresa !== 'string' && typeof idempresa !== 'number') {
+            throw new Error(`idempresa debe ser un string o un número, pero es: ${typeof idempresa}`);
+        }
+
+        // Obtener las empresas desde Redis
+        const redisKey = 'empresasData';
+        const empresasData = await getFromRedis(redisKey);
+        if (!empresasData) {
+            throw new Error(`No se encontraron datos de empresas en Redis.`);
+        }
+
+        // console.log("Datos obtenidos desde Redis:", empresasData);
+
+        // Buscar la empresa por su id
+        const empresa = empresasData[String(idempresa)];
+        if (!empresa) {
+            throw new Error(`No se encontró la configuración de la empresa con ID: ${idempresa}`);
+        }
+
+        //    console.log("Configuración de la empresa encontrada:", empresa);
+
+        // Configurar la conexión a la base de datos
+        const config = {
+            host: 'bhsmysql1.lightdata.com.ar',  // Host fijo
+            database: empresa.dbname,           // Base de datos desde Redis
+            user: empresa.dbuser,               // Usuario desde Redis
+            password: empresa.dbpass,
+            multipleStatements: true,         // Contraseña desde Redis
+        };
+        /*  const config = {
+              host: 'localhost',  // Host fijo
+              database: "logisticaa",           // Base de datos desde Redis
+              user: "logisticaA",               // Usuario desde Redis
+              password: "logisticaa",           // Contraseña desde Redis
+          };*/
+
+        return mysql.createConnection(config);
+    } catch (error) {
+        console.error(`Error al obtener la conexión:`, error.message);
+
+        // Lanza un error con una respuesta estándar
+        throw {
+            status: 500,
+            response: {
+                estado: false,
+
+                error: -1,
+
+            },
+        };
+    }
+}
 
 // ===== DW/local con POOLS separados =====
 const dwConfigBase = {
@@ -272,4 +328,5 @@ module.exports = {
     getConnectionLocalPendientes,
 
     closeDWPool,
+    getConnectionIndividual
 };
