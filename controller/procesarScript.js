@@ -47,49 +47,8 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-ALTER
-    ALGORITHM = UNDEFINED
-    DEFINER = \`lightdat_uinsta\`@\`localhost\`
-    SQL SECURITY DEFINER
-VIEW \`lightdata_clientes\` AS
-SELECT
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` AS \`id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`nombre\` AS \`nombre\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`codigo\` AS \`codigo\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`url\` AS \`url\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_interno\` AS \`email_interno\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_gmaps\` AS \`maneja_mapa_gmaps\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_heremaps\` AS \`maneja_mapa_heremaps\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_cliente_id\` AS \`ml_cliente_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`emails_externos\` AS \`emails_externos\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_secret_key\` AS \`ml_secret_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_url\` AS \`ml_url\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_id\` AS \`tiendanube_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_appkey\` AS \`tiendanube_appkey\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`sys_cantBloqueo\` AS \`sys_cantBloqueo\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_pass\` AS \`email_pass\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_privada\` AS \`captcha_privada\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_publica\` AS \`captcha_publica\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_key\` AS \`heremaps_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`gmaps_key\` AS \`gmaps_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`woocommerce\` AS \`woocommerce\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_ml\` AS \`tiene_ml\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_tiendanube\` AS \`tiene_tiendanube\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`shopify\` AS \`shopify\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_id\` AS \`heremaps_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`plan\` AS \`plan\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`pais\` AS \`pais\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejaCP\` AS \`manejaCP\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`fullfilment\` AS \`fullfilment\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_shopify\` AS \`metodoEnvio_shopify\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_tn\` AS \`metodoEnvio_tn\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`choferCosto\` AS \`choferCosto\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`me1\` AS \`me1\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejoMultidepositos\` AS \`manejoMultidepositos\`
-FROM
-    \`lightdat_sistema\`.\`lightdata_clientes\`
-WHERE
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` = 375;
+SELECT CURRENT_USER(), USER();
+SHOW GRANTS FOR 'lightdat_uujlogistica'@'%';
 `;
 
         for (const didOwnerStr of didOwners) {
@@ -102,7 +61,7 @@ WHERE
 
             const conn = await getConnection(375);
             try {
-                await executeQuery(conn, query, []);
+                await executeQuery(conn, query, [], true);
                 await conn.release();
 
                 console.log(`✅ Query ejecutada para empresa ${didOwner}`);
@@ -377,7 +336,7 @@ WHERE
             let conn = null;
 
             try {
-                conn = await getConnectionIndividual(375);
+                conn = await getConnectionIndividual(didOwner);
 
                 await executeQuery(conn, query, []);
 
@@ -410,7 +369,7 @@ WHERE
     }
 }
 async function main() {
-    await ejecutarQueryTodasEmpresasIndividual();
+    await corregirFechasHistorialTodasEmpresas();
 }
 
 main();

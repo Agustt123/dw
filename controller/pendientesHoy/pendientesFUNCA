@@ -7,7 +7,7 @@ const idsProcesados = [];
 const ESTADOS_69 = new Set([0, 1, 2, 3, 6, 7, 10, 11, 12]);
 const ESTADOS_70 = new Set([5, 9, 17]);
 const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
-const ESTADO_ANY_EVENTO = 998
+const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
 
