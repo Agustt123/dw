@@ -510,6 +510,6 @@ async function pendientesHoy() {
 }
 
 // ✅ NO ejecutar automáticamente al importar
-pendientesHoy();
+//pendientesHoy();
 
 module.exports = { pendientesHoy };
