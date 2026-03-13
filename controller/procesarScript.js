@@ -1,4 +1,4 @@
-const { getConnection, getConnectionLocal, executeQuery, redisClient, getConnectionIndividual } = require("../db");
+const { getConnection, getConnectionLocal, executeQuery, redisClient, getConnectionIndividual, getConnectionSistema } = require("../db");
 
 async function ejecutarQueryParaTodasLasEmpresas(query, values = []) {
     try {
@@ -46,9 +46,49 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
+
         const query = `
-SELECT CURRENT_USER(), USER();
-SHOW GRANTS FOR 'lightdat_uujlogistica'@'%';
+ALTER
+    ALGORITHM = UNDEFINED
+    DEFINER = CURRENT_USER
+    SQL SECURITY DEFINER
+VIEW \`lightdata_clientes\` AS
+SELECT
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` AS \`id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`nombre\` AS \`nombre\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`codigo\` AS \`codigo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`url\` AS \`url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_interno\` AS \`email_interno\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_gmaps\` AS \`maneja_mapa_gmaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_heremaps\` AS \`maneja_mapa_heremaps\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_cliente_id\` AS \`ml_cliente_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`emails_externos\` AS \`emails_externos\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_secret_key\` AS \`ml_secret_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_url\` AS \`ml_url\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_id\` AS \`tiendanube_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_appkey\` AS \`tiendanube_appkey\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`sys_cantBloqueo\` AS \`sys_cantBloqueo\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_pass\` AS \`email_pass\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_privada\` AS \`captcha_privada\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_publica\` AS \`captcha_publica\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_key\` AS \`heremaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`gmaps_key\` AS \`gmaps_key\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`woocommerce\` AS \`woocommerce\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_ml\` AS \`tiene_ml\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_tiendanube\` AS \`tiene_tiendanube\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`shopify\` AS \`shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_id\` AS \`heremaps_id\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`plan\` AS \`plan\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`pais\` AS \`pais\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejaCP\` AS \`manejaCP\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`fullfilment\` AS \`fullfilment\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_shopify\` AS \`metodoEnvio_shopify\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_tn\` AS \`metodoEnvio_tn\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`choferCosto\` AS \`choferCosto\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`me1\` AS \`me1\`,
+    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejoMultidepositos\` AS \`manejoMultidepositos\`
+FROM \`lightdat_sistema\`.\`lightdata_clientes\`
+WHERE \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` = ?
 `;
 
         for (const didOwnerStr of didOwners) {
@@ -59,9 +99,11 @@ SHOW GRANTS FOR 'lightdat_uujlogistica'@'%';
 
             if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
 
-            const conn = await getConnection(375);
+            const conn = await getConnection(didOwner);
             try {
-                await executeQuery(conn, query, [], true);
+                await executeQuery(conn, query, [didOwner], true);
+
+
                 await conn.release();
 
                 console.log(`✅ Query ejecutada para empresa ${didOwner}`);
@@ -132,78 +174,93 @@ async function insertarDepositoCentralSiFalta_TodasEmpresas() {
         console.error("❌ Error general:", err.message);
     }
 }
+async function corregirFechasHistorialEmpresaPrueba() {
+    let conn;
 
-
-async function listarEmpresasConCostoChofer() {
     try {
-        const empresaDataStr = await redisClient.get("empresasData");
+        const didOwner = 375;
+        conn = await getConnection(didOwner);
 
-        if (!empresaDataStr) {
-            console.error("❌ No se encontró 'empresasData' en Redis.");
-            return;
-        }
-
-        const empresaData = JSON.parse(empresaDataStr);
-        const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-
-        // Consulta para ver si existe al menos 1 registro en cada tabla
         const query = `
             SELECT
-                EXISTS(SELECT 1 FROM lista_costochofer              LIMIT 1) AS has_lista_costochofer,
-                EXISTS(SELECT 1 FROM lista_costochofer_servicios   LIMIT 1) AS has_lista_costochofer_servicios,
-                EXISTS(SELECT 1 FROM lista_costochofer_zonas       LIMIT 1) AS has_lista_costochofer_zonas
+                id,
+                nombre,
+                codigo,
+                url,
+                email_interno,
+                maneja_mapa_gmaps,
+                maneja_mapa_heremaps,
+                ml_cliente_id,
+                emails_externos,
+                ml_secret_key,
+                ml_url,
+                tiendanube_id,
+                tiendanube_appkey,
+                sys_cantBloqueo,
+                email_pass,
+                captcha_privada,
+                captcha_publica,
+                heremaps_key,
+                gmaps_key,
+                woocommerce,
+                tiene_ml,
+                tiene_tiendanube,
+                shopify,
+                heremaps_id,
+                plan,
+                pais,
+                manejaCP,
+                fullfilment,
+                metodoEnvio_shopify,
+                metodoEnvio_tn,
+                choferCosto,
+                me1,
+                manejoMultidepositos
+            FROM \`lightdat_sistema\`.\`lightdata_clientes\`
+            WHERE id = ?
         `;
 
-        const empresasConDatos = [];
+        const values = [375];
 
-        for (const didOwnerStr of didOwners) {
-            const didOwner = parseInt(didOwnerStr, 10);
-            if (isNaN(didOwner)) continue;
+        const result = await executeQuery(conn, query, values, true);
+        console.log("✅ Resultado empresa 375:", result);
 
-            // Tus exclusiones
-            if (didOwner == "275" || didOwner == "276" || didOwner == "345" || didOwner == "82" || didOwner == "204" || didOwner == "223" || didOwner == "244" || didOwner == "253") continue;
-            // if (didOwner <= 276) continue;
+    } catch (err) {
+        console.error("❌ Error en empresa 375:", err.message);
+    } finally {
+        if (conn) await conn.release();
+    }
+}
 
-            const conn = await getConnection(didOwner);
+async function sistemaQuery() {
+    const conn = await getConnectionSistema();
 
-            try {
-                const rows = await executeQuery(conn, query, []);
-                await conn.release();
+    try {
 
-                const result = rows[0];
-                const tieneAlgo =
-                    result.has_lista_costochofer === 1 ||
-                    result.has_lista_costochofer_servicios === 1 ||
-                    result.has_lista_costochofer_zonas === 1;
 
-                if (tieneAlgo) {
-                    empresasConDatos.push({
-                        didOwner,
-                        lista_costochofer: !!result.has_lista_costochofer,
-                        lista_costochofer_servicios: !!result.has_lista_costochofer_servicios,
-                        lista_costochofer_zonas: !!result.has_lista_costochofer_zonas,
-                    });
-                    console.log(`✅ Empresa ${didOwner} tiene datos en alguna de las tablas de costo chofer`);
-                } else {
-                    console.log(`➡️ Empresa ${didOwner} SIN datos en tablas de costo chofer`);
-                }
+        const [rows] = await conn.query("SELECT did,manejoMultidepositos FROM lightdata_clientes");
+        conn.release();
 
-            } catch (err) {
-                await conn.release();
-                console.error(`❌ Error consultando empresa ${didOwner}:`, err.message);
-            }
-        }
+        console.log(rows);
+
+
+
+
 
         console.log("📋 Lista de empresas con datos de costo chofer:");
-        console.log(empresasConDatos.map(e => e.didOwner));
+
 
         // Por si querés usar la info desde otro lado
-        return empresasConDatos;
+        return true;
 
     } catch (err) {
         console.error("❌ Error general en listarEmpresasConCostoChofer:", err.message);
+    } finally {
+        if (conn) await conn.release();
     }
 }
+
+
 async function contarEnviosTodasEmpresas() {
     try {
         const empresaDataStr = await redisClient.get("empresasData");
@@ -266,9 +323,7 @@ async function contarEnviosTodasEmpresas() {
     }
 }
 
-async function ejecutarQueryTodasEmpresasIndividual() {
-    let empresasData;
-
+async function contarEnviosTodasEmpresas() {
     try {
         const empresaDataStr = await redisClient.get("empresasData");
 
@@ -277,99 +332,72 @@ async function ejecutarQueryTodasEmpresasIndividual() {
             return;
         }
 
-        empresasData = JSON.parse(empresaDataStr);
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
 
-        const didOwners = Object.keys(empresasData); // Ej: ["2", "3", "4"]
+        const inicioDia = "2026-01-01 00:00:00";
+        const finDia = "2026-03-13 00:00:00";
 
-        const query = `
-ALTER
-    ALGORITHM = UNDEFINED
-    DEFINER = \`lightdat_uinsta\`@\`localhost\`
-    SQL SECURITY DEFINER
-VIEW \`lightdata_clientes\` AS
-SELECT
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` AS \`id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`nombre\` AS \`nombre\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`codigo\` AS \`codigo\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`url\` AS \`url\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_interno\` AS \`email_interno\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_gmaps\` AS \`maneja_mapa_gmaps\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`maneja_mapa_heremaps\` AS \`maneja_mapa_heremaps\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_cliente_id\` AS \`ml_cliente_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`emails_externos\` AS \`emails_externos\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_secret_key\` AS \`ml_secret_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`ml_url\` AS \`ml_url\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_id\` AS \`tiendanube_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiendanube_appkey\` AS \`tiendanube_appkey\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`sys_cantBloqueo\` AS \`sys_cantBloqueo\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`email_pass\` AS \`email_pass\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_privada\` AS \`captcha_privada\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`captcha_publica\` AS \`captcha_publica\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_key\` AS \`heremaps_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`gmaps_key\` AS \`gmaps_key\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`woocommerce\` AS \`woocommerce\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_ml\` AS \`tiene_ml\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`tiene_tiendanube\` AS \`tiene_tiendanube\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`shopify\` AS \`shopify\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`heremaps_id\` AS \`heremaps_id\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`plan\` AS \`plan\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`pais\` AS \`pais\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejaCP\` AS \`manejaCP\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`fullfilment\` AS \`fullfilment\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_shopify\` AS \`metodoEnvio_shopify\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`metodoEnvio_tn\` AS \`metodoEnvio_tn\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`choferCosto\` AS \`choferCosto\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`me1\` AS \`me1\`,
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`manejoMultidepositos\` AS \`manejoMultidepositos\`
-FROM
-    \`lightdat_sistema\`.\`lightdata_clientes\`
-WHERE
-    \`lightdat_sistema\`.\`lightdata_clientes\`.\`id\` = 375;
-`;
+        const countQuery = `
+            SELECT COUNT(*) AS cantidad
+            FROM envios_historial
+            WHERE autofecha >= ?
+              AND autofecha < ?
+            
+              AND elim = 0
+        `;
+
+        const exclusions = new Set([275, 276, 345]);
+
+        let totalGlobal = 0;
+        const resultados = [];
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+            if (exclusions.has(didOwner)) continue;
 
-            if (isNaN(didOwner)) continue;
-            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
-
-            let conn = null;
+            const conn = await getConnection(didOwner);
 
             try {
-                conn = await getConnectionIndividual(didOwner);
+                const rows = await executeQuery(conn, countQuery, [inicioDia, finDia]);
+                const cantidad = Number(rows?.[0]?.cantidad ?? 0);
 
-                await executeQuery(conn, query, []);
+                resultados.push({
+                    didOwner,
+                    nombreEmpresa: empresaData[didOwnerStr]?.nombre || `Empresa ${didOwner}`,
+                    cantidad
+                });
 
-                console.log(`✅ Query ejecutada para empresa ${didOwner}`);
+                totalGlobal += cantidad;
             } catch (err) {
-                console.error(
-                    `❌ Error ejecutando query para empresa ${didOwner}:`,
-                    err?.message || err
-                );
+                console.error(`❌ Error contando envíos para empresa ${didOwner}:`, err.message);
             } finally {
-                try {
-                    if (conn && typeof conn.end === "function") {
-                        await conn.end();
-                    } else if (conn && typeof conn.destroy === "function") {
-                        conn.destroy();
-                    }
-                } catch (closeErr) {
-                    console.error(
-                        `⚠️ Error cerrando conexión para empresa ${didOwner}:`,
-                        closeErr?.message || closeErr
-                    );
-                }
+                await conn.release();
             }
         }
+
+        resultados.sort((a, b) => b.cantidad - a.cantidad);
+
+        console.log("====================================");
+        console.log("📦 Cantidad de envíos por empresa:");
+        console.log("====================================");
+
+        resultados.forEach((r, index) => {
+            console.log(
+                `${index + 1}. ${r.nombreEmpresa} (ID: ${r.didOwner}) => ${r.cantidad} envíos`
+            );
+        });
+
+        console.log("====================================");
+        console.log(`✅ Total global de envíos: ${totalGlobal}`);
+        console.log(`✅ Total de empresas procesadas: ${resultados.length}`);
     } catch (err) {
-        console.error(
-            "❌ Error general en ejecutarQueryTodasEmpresasIndividual:",
-            err?.message || err
-        );
+        console.error("❌ Error general en contarEnviosTodasEmpresas:", err.message);
     }
 }
 async function main() {
-    await corregirFechasHistorialTodasEmpresas();
+    await contarEnviosTodasEmpresas();
 }
 
 main();

@@ -166,23 +166,32 @@ async function sincronizarEnviosBatchParaEmpresa(
 // -------------------- Procesadores --------------------
 
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics) {
-    const lastEnvios = await executeQuery(connDW, "SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    const lastIdEnvios = lastEnvios.length ? lastEnvios[0].idMaxEnvios : 0;
+    const lastEnvios = await executeQuery(
+        connDW,
+        "SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?",
+        [didOwner]
+    );
+
+    const lastIdEnvios = lastEnvios.length ? Number(lastEnvios[0].idMaxEnvios) : 0;
 
     const enviosRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios WHERE id >  ?  AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 5000",
+        `
+        SELECT *
+        FROM envios
+        WHERE id > ?
+          AND autofecha > '2026-01-01 00:00:00'
+        ORDER BY id ASC
+        LIMIT 5000
+        `,
         [lastIdEnvios]
     );
 
-    // ✅ métricas
     metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
     metrics.porEmpresa[didOwner].envios += enviosRows.length;
     metrics.envios += enviosRows.length;
 
-    if (enviosRows.length === 5000) {
-        //     console.log(`[${didOwner}] ⚠️ envios: LIMIT 5000 alcanzado (posible backlog)`);
-    }
+    if (!enviosRows.length) return;
 
     let lastProcessedId = 0;
 
@@ -193,7 +202,11 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
     ];
 
     for (const envio of enviosRows) {
-        const envioDW = { ...envio, didEnvio: envio.did, didOwner };
+        const envioDW = {
+            ...envio,
+            didEnvio: envio.did,
+            didOwner
+        };
 
         const envioFiltrado = {};
         for (const [k, v] of Object.entries(envioDW)) {
@@ -208,57 +221,99 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
         const columnas = Object.keys(envioFiltrado);
         const valores = Object.values(envioFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas
-            .filter(c => c !== "didEnvio" && c !== "didOwner")
-            .map(c => `${c} = VALUES(${c})`)
-            .join(",");
 
-        const sql = `
-      INSERT INTO envios (${columnas.join(",")})
-      VALUES (${placeholders})
-      ON DUPLICATE KEY UPDATE ${updateSet}
-    `;
+        const insertSql = `
+            INSERT INTO envios (${columnas.join(",")})
+            VALUES (${placeholders})
+        `;
 
-        await executeQuery(connDW, sql, valores);
+        // Insertamos siempre una nueva fila
+        const resInsert = await executeQuery(connDW, insertSql, valores, true);
+        const newDwId = resInsert.insertId;
+
+        // Dejamos SOLO la recién insertada como superado = 0
+        // y forzamos las anteriores del mismo paquete a superado = 1
+        await executeQuery(
+            connDW,
+            `
+            UPDATE envios
+            SET superado = 1
+            WHERE didOwner = ?
+              AND didEnvio = ?
+              AND id <> ?
+              AND superado = 0
+            `,
+            [didOwner, envio.did, newDwId]
+        );
+
+        // Por seguridad, dejamos la nueva activa
+        await executeQuery(
+            connDW,
+            `
+            UPDATE envios
+            SET superado = 0
+            WHERE id = ?
+            `,
+            [newDwId]
+        );
+
         lastProcessedId = envio.id;
     }
 
     if (lastProcessedId > 0) {
         await executeQuery(
             connDW,
-            "UPDATE envios_max_ids SET idMaxEnvios = ? WHERE didOwner = ?",
+            `
+            UPDATE envios_max_ids
+            SET idMaxEnvios = ?
+            WHERE didOwner = ?
+            `,
             [lastProcessedId, didOwner]
         );
     }
 }
-
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics) {
-    const lastAsignaciones = await executeQuery(connDW, "SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
-    const lastIdAsignaciones = lastAsignaciones.length ? lastAsignaciones[0].idMaxAsignaciones : 0;
+    const lastAsignaciones = await executeQuery(
+        connDW,
+        "SELECT idMaxAsignaciones FROM envios_max_ids WHERE didOwner = ?",
+        [didOwner]
+    );
+
+    const lastIdAsignaciones = lastAsignaciones.length
+        ? Number(lastAsignaciones[0].idMaxAsignaciones)
+        : 0;
 
     const asignacionesRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios_asignaciones WHERE autofecha > '2026-01-01 00:00:00'  AND id > ? ORDER BY id ASC LIMIT 5000",
+        `
+        SELECT *
+        FROM envios_asignaciones
+        WHERE autofecha > '2026-01-01 00:00:00'
+          AND id > ?
+        ORDER BY id ASC
+        LIMIT 5000
+        `,
         [lastIdAsignaciones]
     );
 
-    // ✅ métricas
     metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
     metrics.porEmpresa[didOwner].asignaciones += asignacionesRows.length;
     metrics.asignaciones += asignacionesRows.length;
 
-    if (asignacionesRows.length === 5000) {
-        //  console.log(`[${didOwner}] ⚠️ asignaciones: LIMIT 5000 alcanzado (posible backlog)`);
-    }
-
     let lastProcessedId = 0;
 
     for (const asignacion of asignacionesRows) {
-        const asignacionDW = { ...asignacion, didAsignacion: asignacion.did, didOwner };
+        const asignacionDW = {
+            ...asignacion,
+            didAsignacion: asignacion.did,
+            didOwner
+        };
 
         const asignacionFiltrado = {};
         for (const [k, v] of Object.entries(asignacionDW)) {
-            if (columnasAsignacionesDW.includes(k)) asignacionFiltrado[k] = v;
+            if (columnasAsignacionesDW.includes(k) && k !== "id") {
+                asignacionFiltrado[k] = v;
+            }
         }
 
         if (Object.keys(asignacionFiltrado).length === 0) continue;
@@ -266,18 +321,40 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         const columnas = Object.keys(asignacionFiltrado);
         const valores = Object.values(asignacionFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
-        const updateSet = columnas
-            .filter(c => c !== "didAsignacion" && c !== "didOwner")
-            .map(c => `${c} = VALUES(${c})`)
-            .join(",");
 
-        const sql = `
-      INSERT INTO asignaciones (${columnas.join(",")})
-      VALUES (${placeholders})
-      ON DUPLICATE KEY UPDATE ${updateSet}
-    `;
+        const insertSql = `
+            INSERT INTO asignaciones (${columnas.join(",")})
+            VALUES (${placeholders})
+        `;
 
-        await executeQuery(connDW, sql, valores);
+        const resInsert = await executeQuery(connDW, insertSql, valores, true);
+        const newDwId = resInsert.insertId;
+
+        // Superar las anteriores del mismo paquete
+        await executeQuery(
+            connDW,
+            `
+            UPDATE asignaciones
+            SET superado = 1
+            WHERE didOwner = ?
+              AND didEnvio = ?
+              AND id <> ?
+              AND superado = 0
+            `,
+            [didOwner, asignacion.didEnvio, newDwId]
+        );
+
+        // Dejar la nueva activa
+        await executeQuery(
+            connDW,
+            `
+            UPDATE asignaciones
+            SET superado = 0
+            WHERE id = ?
+            `,
+            [newDwId]
+        );
+
         lastProcessedId = asignacion.id;
     }
 
@@ -289,18 +366,27 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         );
     }
 }
-
 async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics) {
     const lastEstados = await executeQuery(
         connDW,
         "SELECT idMaxEstados FROM envios_max_ids WHERE didOwner = ?",
         [didOwner]
     );
-    const lastIdEstados = lastEstados.length ? Number(lastEstados[0].idMaxEstados) : 0;
+
+    const lastIdEstados = lastEstados.length
+        ? Number(lastEstados[0].idMaxEstados)
+        : 0;
 
     const historialRows = await executeQuery(
         connEmpresa,
-        "SELECT * FROM envios_historial WHERE id > ? AND autofecha > '2026-01-01 00:00:00' ORDER BY id ASC LIMIT 5000",
+        `
+        SELECT *
+        FROM envios_historial
+        WHERE id > ?
+          AND autofecha > '2026-01-01 00:00:00'
+        ORDER BY id ASC
+        LIMIT 5000
+        `,
         [lastIdEstados]
     );
 
@@ -309,25 +395,26 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     metrics.estados += historialRows.length;
 
     let lastProcessedId = 0;
-    let inserted = 0;
-    let stoppedBy = null;
 
     for (const hist of historialRows) {
-        const estadoDW = { ...hist, didOwner };
+        const estadoDW = {
+            ...hist,
+            didOwner
+        };
 
         const estadoFiltrado = {};
         for (const [k, v] of Object.entries(estadoDW)) {
-            if (k === "id") continue; // NO copiar id del origen
-            if (columnasEstadosDW.includes(k)) estadoFiltrado[k] = v;
+            if (k === "id") continue;
+            if (columnasEstadosDW.includes(k)) {
+                estadoFiltrado[k] = v;
+            }
         }
 
         if (columnasEstadosDW.includes("didOwner")) {
             estadoFiltrado.didOwner = didOwner;
         }
 
-        // Si queda vacío, NO es safe seguir (te genera huecos)
         if (Object.keys(estadoFiltrado).length === 0) {
-            stoppedBy = `estadoFiltrado vacío (hist.id=${hist.id})`;
             break;
         }
 
@@ -335,45 +422,53 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
         const valores = Object.values(estadoFiltrado);
         const placeholders = columnas.map(() => "?").join(",");
 
-        const sql = `
-      INSERT INTO estado (${columnas.join(",")})
-      VALUES (${placeholders})
-    `;
+        const insertSql = `
+            INSERT INTO estado (${columnas.join(",")})
+            VALUES (${placeholders})
+        `;
 
-        try {
-            const res = await executeQuery(connDW, sql, valores, true);
-            const affected = Number(res?.affectedRows ?? 1);
+        const resInsert = await executeQuery(connDW, insertSql, valores, true);
+        const newDwId = resInsert.insertId;
 
-            if (affected <= 0) {
-                stoppedBy = `insert sin efecto (hist.id=${hist.id})`;
-                break;
-            }
+        // Superar los anteriores del mismo paquete
+        await executeQuery(
+            connDW,
+            `
+            UPDATE estado
+            SET superado = 1
+            WHERE didOwner = ?
+              AND didEnvio = ?
+              AND id <> ?
+              AND superado = 0
+            `,
+            [didOwner, hist.didEnvio, newDwId]
+        );
 
-            inserted += 1;
-            lastProcessedId = hist.id; // ✅ avance contiguo
-        } catch (e) {
-            stoppedBy = `error insert (hist.id=${hist.id}) code=${e?.code || "?"} msg=${e?.sqlMessage || e?.message || "?"}`;
-            break; // ✅ CLAVE: no seguir, así no te salteás ids
-        }
+        // Dejar el nuevo activo
+        await executeQuery(
+            connDW,
+            `
+            UPDATE estado
+            SET superado = 0
+            WHERE id = ?
+            `,
+            [newDwId]
+        );
+
+        lastProcessedId = hist.id;
     }
 
-    // Solo actualizás el max si avanzaste algo contiguo
     if (lastProcessedId > 0) {
         await executeQuery(
             connDW,
             `
-      INSERT INTO envios_max_ids (didOwner, idMaxEstados)
-      VALUES (?, ?)
-      ON DUPLICATE KEY UPDATE idMaxEstados = VALUES(idMaxEstados)
-      `,
+            INSERT INTO envios_max_ids (didOwner, idMaxEstados)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE idMaxEstados = VALUES(idMaxEstados)
+            `,
             [didOwner, lastProcessedId]
         );
     }
-
-    //  console.log(
-    //    `[${didOwner}] estados fetched=${historialRows.length} inserted=${inserted} lastIdAntes=${lastIdEstados} lastIdNuevo=${lastProcessedId || lastIdEstados}` +
-    //   (stoppedBy ? ` STOP: ${stoppedBy}` : "")
-    //);
 }
 async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
     const limitParaEliminar = 5000;

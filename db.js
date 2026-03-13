@@ -31,7 +31,16 @@ const superPool = mysql.createPool({
     queueLimit: 0,
     multipleStatements: true, // Por si necesitás ejecutar varios queries separados por ";"
 });
-
+const sistemaPool = mysql.createPool({
+    host: "bhsmysql1.lightdata.com.ar",
+    user: "lightdat_susanita",
+    password: "susanitateniaunraton",
+    database: "lightdat_sistema",
+    waitForConnections: true,
+    connectionLimit: 2,
+    queueLimit: 0,
+    multipleStatements: true,
+});
 // --- Variables locales ---
 let companiesList = {};
 
@@ -136,7 +145,26 @@ async function getConnectionIndividual(idempresa) {
         };
     }
 }
+async function getConnectionSistema() {
+    let connection;
+    try {
+        connection = await sistemaPool.getConnection();
+        return connection;
+    } catch (error) {
+        try {
+            if (connection?.release) connection.release();
+        } catch (_) { }
 
+        throw {
+            status: 500,
+            response: {
+                estado: false,
+                error: -1,
+                message: error?.message || String(error),
+            },
+        };
+    }
+}
 // ===== DW/local con POOLS separados =====
 const dwConfigBase = {
     host: "149.56.182.49",
@@ -328,5 +356,6 @@ module.exports = {
     getConnectionLocalPendientes,
 
     closeDWPool,
-    getConnectionIndividual
+    getConnectionIndividual,
+    getConnectionSistema
 };
