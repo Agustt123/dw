@@ -187,7 +187,7 @@ async function startJobs() {
 
         while (true) {
             try {
-                await runPendientesFixed();
+                //await runPendientesFixed();
             } catch (e) {
                 console.error("❌ [JOBS] Error en loopPendientesHoy:", e?.message || e);
             }
@@ -244,10 +244,10 @@ async function startJobs() {
     iniciarSchedulers();
 
     // pendientesHoy corre aparte en loop infinito
-    loopPendientesHoy().catch((e) => {
-        console.error("❌ [JOBS] loopPendientesHoy murió:", e?.message || e);
-    });
-
+    /* loopPendientesHoy().catch((e) => {
+         console.error("❌ [JOBS] loopPendientesHoy murió:", e?.message || e);
+     });
+ */
     startMonitoreoJob();
     startMonitoreoMetricas();
 
