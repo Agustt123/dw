@@ -166,110 +166,123 @@ async function sincronizarEnviosBatchParaEmpresa(
 // -------------------- Procesadores --------------------
 
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics) {
-    const lastEnvios = await executeQuery(
-        connDW,
-        "SELECT idMaxEnvios FROM envios_max_ids WHERE didOwner = ?",
-        [didOwner]
-    );
+    await executeQuery(connDW, "START TRANSACTION");
 
-    const lastIdEnvios = lastEnvios.length ? Number(lastEnvios[0].idMaxEnvios) : 0;
+    try {
+        const lastEnvios = await executeQuery(
+            connDW,
+            `
+            SELECT idMaxEnvios
+            FROM envios_max_ids
+            WHERE didOwner = ?
+            FOR UPDATE
+            `,
+            [didOwner]
+        );
 
-    const enviosRows = await executeQuery(
-        connEmpresa,
-        `
-        SELECT *
-        FROM envios
-        WHERE id > ?
-          AND autofecha > '2026-01-01 00:00:00'
-        ORDER BY id ASC
-        LIMIT 5000
-        `,
-        [lastIdEnvios]
-    );
+        const lastIdEnvios = lastEnvios.length ? Number(lastEnvios[0].idMaxEnvios) : 0;
 
-    metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
-    metrics.porEmpresa[didOwner].envios += enviosRows.length;
-    metrics.envios += enviosRows.length;
+        const enviosRows = await executeQuery(
+            connEmpresa,
+            `
+            SELECT *
+            FROM envios
+            WHERE id > ?
+              AND autofecha > '2026-01-01 00:00:00'
+            ORDER BY id ASC
+            LIMIT 5000
+            `,
+            [lastIdEnvios]
+        );
 
-    if (!enviosRows.length) return;
+        metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+        metrics.porEmpresa[didOwner].envios += enviosRows.length;
+        metrics.envios += enviosRows.length;
 
-    let lastProcessedId = 0;
-
-    const columnasNoNull = [
-        "estimated_delivery_time_date",
-        "estimated_delivery_time_date_72",
-        "estimated_delivery_time_date_480",
-    ];
-
-    for (const envio of enviosRows) {
-        const envioDW = {
-            ...envio,
-            didEnvio: envio.did,
-            didOwner
-        };
-
-        const envioFiltrado = {};
-        for (const [k, v] of Object.entries(envioDW)) {
-            if (columnasEnviosDW.includes(k) && k !== "id") {
-                if (v === null && columnasNoNull.includes(k)) continue;
-                envioFiltrado[k] = v;
-            }
+        if (!enviosRows.length) {
+            await executeQuery(connDW, "COMMIT");
+            return;
         }
 
-        if (Object.keys(envioFiltrado).length === 0) continue;
+        let lastProcessedId = 0;
 
-        const columnas = Object.keys(envioFiltrado);
-        const valores = Object.values(envioFiltrado);
-        const placeholders = columnas.map(() => "?").join(",");
+        const columnasNoNull = [
+            "estimated_delivery_time_date",
+            "estimated_delivery_time_date_72",
+            "estimated_delivery_time_date_480",
+        ];
 
-        const insertSql = `
-            INSERT INTO envios (${columnas.join(",")})
-            VALUES (${placeholders})
-        `;
+        for (const envio of enviosRows) {
+            const envioDW = {
+                ...envio,
+                didEnvio: envio.did,
+                didOwner
+            };
 
-        // Insertamos siempre una nueva fila
-        const resInsert = await executeQuery(connDW, insertSql, valores, true);
-        const newDwId = resInsert.insertId;
+            const envioFiltrado = {};
+            for (const [k, v] of Object.entries(envioDW)) {
+                if (columnasEnviosDW.includes(k) && k !== "id") {
+                    if (v === null && columnasNoNull.includes(k)) continue;
+                    envioFiltrado[k] = v;
+                }
+            }
 
-        // Dejamos SOLO la recién insertada como superado = 0
-        // y forzamos las anteriores del mismo paquete a superado = 1
-        await executeQuery(
-            connDW,
-            `
-            UPDATE envios
-            SET superado = 1
-            WHERE didOwner = ?
-              AND didEnvio = ?
-              AND id <> ?
-              AND superado = 0
-            `,
-            [didOwner, envio.did, newDwId]
-        );
+            if (Object.keys(envioFiltrado).length === 0) continue;
 
-        // Por seguridad, dejamos la nueva activa
-        await executeQuery(
-            connDW,
-            `
-            UPDATE envios
-            SET superado = 0
-            WHERE id = ?
-            `,
-            [newDwId]
-        );
+            const columnas = Object.keys(envioFiltrado);
+            const valores = Object.values(envioFiltrado);
+            const placeholders = columnas.map(() => "?").join(",");
 
-        lastProcessedId = envio.id;
-    }
+            const insertSql = `
+                INSERT INTO envios (${columnas.join(",")})
+                VALUES (${placeholders})
+            `;
 
-    if (lastProcessedId > 0) {
-        await executeQuery(
-            connDW,
-            `
-            UPDATE envios_max_ids
-            SET idMaxEnvios = ?
-            WHERE didOwner = ?
-            `,
-            [lastProcessedId, didOwner]
-        );
+            const resInsert = await executeQuery(connDW, insertSql, valores, true);
+            const newDwId = resInsert.insertId;
+
+            await executeQuery(
+                connDW,
+                `
+                UPDATE envios
+                SET superado = 1
+                WHERE didOwner = ?
+                  AND didEnvio = ?
+                  AND id <> ?
+                  AND superado = 0
+                `,
+                [didOwner, envio.did, newDwId]
+            );
+
+            await executeQuery(
+                connDW,
+                `
+                UPDATE envios
+                SET superado = 0
+                WHERE id = ?
+                `,
+                [newDwId]
+            );
+
+            lastProcessedId = envio.id;
+        }
+
+        if (lastProcessedId > 0) {
+            await executeQuery(
+                connDW,
+                `
+                UPDATE envios_max_ids
+                SET idMaxEnvios = ?
+                WHERE didOwner = ?
+                `,
+                [lastProcessedId, didOwner]
+            );
+        }
+
+        await executeQuery(connDW, "COMMIT");
+    } catch (error) {
+        await executeQuery(connDW, "ROLLBACK");
+        throw error;
     }
 }
 async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics) {

@@ -261,67 +261,6 @@ async function sistemaQuery() {
 }
 
 
-async function contarEnviosTodasEmpresas() {
-    try {
-        const empresaDataStr = await redisClient.get("empresasData");
-
-        if (!empresaDataStr) {
-            console.error("❌ No se encontró 'empresasData' en Redis.");
-            return;
-        }
-
-        const empresaData = JSON.parse(empresaDataStr);
-        const didOwners = Object.keys(empresaData);
-
-        const inicioDia = "2026-02-25 00:00:00";
-        const finDia = "2026-02-26 00:00:00";
-
-        const countQuery = `
-  SELECT COUNT(*) AS cantidad
-  FROM envios
-  WHERE fecha_inicio >= ?
-    AND fecha_inicio < ?
-    AND superado = 0
-`;
-
-        const exclusions = new Set([275, 276, 345]);
-
-        let totalGlobal = 0;
-        const resultados = [];
-
-        for (const didOwnerStr of didOwners) {
-            const didOwner = parseInt(didOwnerStr, 10);
-            if (Number.isNaN(didOwner)) continue;
-            if (exclusions.has(didOwner)) continue;
-
-            const conn = await getConnection(didOwner);
-
-            try {
-                const rows = await executeQuery(conn, countQuery, [inicioDia, finDia]);
-                const cantidad = Number(rows?.[0]?.cantidad ?? 0);
-                resultados.push({ didOwner, cantidad });
-                totalGlobal += cantidad;
-
-                console.log(`🏢 Empresa ${didOwner}: ${cantidad} envíos`);
-            } catch (err) {
-                console.error(`❌ Error contando envíos para empresa ${didOwner}:`, err.message);
-            } finally {
-                await conn.release();
-            }
-        }
-
-        console.log("====================================");
-        console.log(`✅ Total global envíos: ${totalGlobal}`);
-        console.log("✅ Top (primeros 20 por cantidad):");
-
-        resultados
-            .sort((a, b) => b.cantidad - a.cantidad)
-            .slice(0, 20)
-            .forEach(r => console.log(`- ${r.didOwner}: ${r.cantidad}`));
-    } catch (err) {
-        console.error("❌ Error general en contarEnviosTodasEmpresas:", err.message);
-    }
-}
 
 async function contarEnviosTodasEmpresas() {
     try {
@@ -340,10 +279,9 @@ async function contarEnviosTodasEmpresas() {
 
         const countQuery = `
             SELECT COUNT(*) AS cantidad
-            FROM envios_historial
-            WHERE autofecha >= ?
-              AND autofecha < ?
-            
+            FROM envios
+            WHERE fecha_inicio >= ?
+        
               AND elim = 0
         `;
 
@@ -394,6 +332,119 @@ async function contarEnviosTodasEmpresas() {
         console.log(`✅ Total de empresas procesadas: ${resultados.length}`);
     } catch (err) {
         console.error("❌ Error general en contarEnviosTodasEmpresas:", err.message);
+    }
+}
+async function contarPesoTablasTodasEmpresas() {
+    try {
+        const empresaDataStr = await redisClient.get("empresasData");
+
+        if (!empresaDataStr) {
+            console.error("❌ No se encontró 'empresasData' en Redis.");
+            return;
+        }
+
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
+
+        const exclusions = new Set([275, 276, 345]);
+
+        let totalGlobalBytes = 0;
+
+        let totalEnviosBytes = 0;
+        let totalHistorialBytes = 0;
+        let totalAsignacionesBytes = 0;
+
+        const resultados = [];
+
+        const sizeQuery = `
+            SELECT
+                table_name,
+                COALESCE(data_length, 0) + COALESCE(index_length, 0) AS total_bytes
+            FROM information_schema.tables
+            WHERE table_schema = ?
+              AND table_name IN ('envios', 'envios_historial', 'envios_asignaciones')
+        `;
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+            if (exclusions.has(didOwner)) continue;
+            console.log(empresaData[didOwner].dbname);
+
+            const conn = await getConnection(didOwner);
+
+
+            try {
+                const rows = await executeQuery(conn, sizeQuery, [empresaData[didOwner].dbname]);
+
+                let enviosBytes = 0;
+                let historialBytes = 0;
+                let asignacionesBytes = 0;
+
+                for (const row of rows) {
+                    const tableName = row.TABLE_NAME || row.table_name;
+                    const bytes = Number(row.total_bytes || 0);
+
+                    if (tableName === "envios") {
+                        enviosBytes = bytes;
+                    } else if (tableName === "envios_historial") {
+                        historialBytes = bytes;
+                    } else if (tableName === "envios_asignaciones") {
+                        asignacionesBytes = bytes;
+                    }
+                }
+
+                const totalEmpresaBytes = enviosBytes + historialBytes + asignacionesBytes;
+
+                resultados.push({
+                    didOwner,
+                    nombreEmpresa: empresaData[didOwnerStr]?.nombre || `Empresa ${didOwner}`,
+                    enviosBytes,
+                    historialBytes,
+                    asignacionesBytes,
+                    totalEmpresaBytes
+                });
+
+                totalEnviosBytes += enviosBytes;
+                totalHistorialBytes += historialBytes;
+                totalAsignacionesBytes += asignacionesBytes;
+                totalGlobalBytes += totalEmpresaBytes;
+
+            } catch (err) {
+                console.error(`❌ Error calculando tamaño para empresa ${didOwner}:`, err.message);
+            } finally {
+                await conn.release();
+            }
+        }
+
+        resultados.sort((a, b) => b.totalEmpresaBytes - a.totalEmpresaBytes);
+
+        const toMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+        const toGB = (bytes) => (bytes / 1024 / 1024 / 1024).toFixed(2);
+
+        console.log("====================================");
+        console.log("📦 Peso de tablas por empresa:");
+        console.log("====================================");
+
+        resultados.forEach((r, index) => {
+            console.log(
+                `${index + 1}. ${r.nombreEmpresa} (ID: ${r.didOwner})` +
+                ` | envios: ${toGB(r.enviosBytes)} GB` +
+                ` | historial: ${toGB(r.historialBytes)} GB` +
+                ` | asignaciones: ${toGB(r.asignacionesBytes)} GB` +
+                ` | TOTAL: ${toGB(r.totalEmpresaBytes)} GB`
+            );
+        });
+
+        console.log("====================================");
+        console.log(`✅ Total envios: ${toGB(totalEnviosBytes)} GB (${toMB(totalEnviosBytes)} MB)`);
+        console.log(`✅ Total envios_historial: ${toGB(totalHistorialBytes)} GB (${toMB(totalHistorialBytes)} MB)`);
+        console.log(`✅ Total envios_asignaciones: ${toGB(totalAsignacionesBytes)} GB (${toMB(totalAsignacionesBytes)} MB)`);
+        console.log(`✅ TOTAL GLOBAL: ${toGB(totalGlobalBytes)} GB (${toMB(totalGlobalBytes)} MB)`);
+        console.log(`✅ Total de empresas procesadas: ${resultados.length}`);
+
+    } catch (err) {
+        console.error("❌ Error general en contarPesoTablasTodasEmpresas:", err.message);
     }
 }
 async function main() {
