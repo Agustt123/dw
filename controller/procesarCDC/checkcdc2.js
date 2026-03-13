@@ -58,7 +58,7 @@ VALUES
       WHERE didOwner = ? AND didEnvio = ?
     `;
 
-        const ejecutadores = ["verificarCierre", "estado"];
+        const ejecutadores = ["estado"];
         const disparador = "estado";
 
         for (const row of rows) {
@@ -139,7 +139,7 @@ async function EnviarcdAsignacion(didOwner) {
       WHERE didOwner = ? AND didEnvio = ?
     `;
 
-        const ejecutadores = ["verificarCierre", "estado"];
+        const ejecutadores = ["estado"];
         const disparador = "asignaciones";
 
         for (const row of rows) {

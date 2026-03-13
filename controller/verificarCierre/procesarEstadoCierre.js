@@ -9,7 +9,7 @@ async function procesarCDC() {
         const rows = await executeQuery(connection, `
             SELECT id, didOwner, didPaquete, disparador, data, fecha, estado
             FROM cdc
-            WHERE procesado = 0 AND disparador = "estado" AND ejecutar = "verificarCierre"
+            WHERE procesado = 0 AND disparador = "estado" 
             LIMIT 20
         `);
 
