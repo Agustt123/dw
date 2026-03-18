@@ -157,9 +157,58 @@ async function getPrevFromHomeApp(conn, owner, envio) {
   return await executeQuery(conn, qPrev, [owner, String(envio)]);
 }
 
+async function preloadPrevFromHomeApp(conn, rows) {
+  const prevMap = new Map();
+  const enviosPorOwner = new Map();
+
+  for (const row of rows) {
+    const owner = Number(row.didOwner);
+    const envio = String(row.didPaquete || "");
+    if (!owner || !envio) continue;
+
+    if (!enviosPorOwner.has(owner)) enviosPorOwner.set(owner, new Set());
+    enviosPorOwner.get(owner).add(envio);
+  }
+
+  for (const [owner, enviosSet] of enviosPorOwner.entries()) {
+    if (!enviosSet.size) continue;
+
+    const qPrevBatch = `
+      SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
+      FROM home_app
+      WHERE didOwner = ?
+      ORDER BY dia DESC, autofecha DESC
+    `;
+
+    const prevRows = await executeQuery(conn, qPrevBatch, [owner]);
+
+    for (const prev of prevRows) {
+      const cierreSet = parseCSVToSet(prev.didsPaquetes_cierre);
+
+      for (const envio of cierreSet) {
+        if (!enviosSet.has(envio)) continue;
+
+        const key = `${owner}|${envio}`;
+        if (!prevMap.has(key)) {
+          prevMap.set(key, [{
+            estado: prev.estado,
+            didChofer: prev.didChofer,
+            didCliente: prev.didCliente,
+            dia: prev.dia
+          }]);
+        }
+      }
+    }
+  }
+
+  return prevMap;
+}
+
 
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
+  const prevMap = await preloadPrevFromHomeApp(connection, rows);
+
   for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
@@ -173,8 +222,8 @@ async function buildAprocesosEstado(rows, connection) {
     const envio = String(row.didPaquete);
     const CHO = EST === 0 ? (Number(row.quien) || 0) : (row.didChofer ?? 0);
 
-    // ✅ prev desde home_app (sin idx)
-    const prevRows = await getPrevFromHomeApp(connection, OW, envio);
+    // ✅ prev desde home_app precargado antes del loop
+    const prevRows = prevMap.get(`${OW}|${envio}`) || [];
 
     for (const prev of prevRows) {
       const PREV_EST = nEstado(prev.estado);
@@ -461,15 +510,27 @@ async function pendientesHoy() {
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
       FROM cdc
       WHERE procesado=0
-        AND ( ejecutar="estado" OR ejecutar="asignaciones" )
-        AND didCliente IS NOT NULL
+  
       ORDER BY id ASC
       LIMIT ?
     `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
 
-    const rowsEstado = rows.filter(r => r.disparador === "estado");
-    const rowsAsignaciones = rows.filter(r => r.disparador === "asignaciones");
+    const rowsClienteNull = rows.filter(r => r.didCliente == null);
+    const rowsValidas = rows.filter(r => r.didCliente != null);
+
+    if (rowsClienteNull.length) {
+      const idsNull = rowsClienteNull.map(r => r.id);
+      const updNull = `
+        UPDATE cdc
+        SET procesado=2, fProcesado=NOW()
+        WHERE id IN (${idsNull.map(() => "?").join(",")})
+      `;
+      await executeQuery(conn, updNull, idsNull);
+    }
+
+    const rowsEstado = rowsValidas.filter(r => r.disparador === "estado");
+    const rowsAsignaciones = rowsValidas.filter(r => r.disparador === "asignaciones");
 
     console.log("llegamos 1");
 
@@ -482,7 +543,7 @@ async function pendientesHoy() {
     await aplicarAprocesosAHommeApp(conn);
     console.log("llegamos 4");
 
-    return { ok: true, fetched: rows.length, processedIds: idsProcesados.length };
+    return { ok: true, fetched: rows.length, processedIds: idsProcesados.length, descartados: rowsClienteNull.length };
   } catch (err) {
     fatalErr = err;
     console.error("❌ Error batch:", err);
