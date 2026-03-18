@@ -299,7 +299,7 @@ async function loadCompaniesFromRedis() {
 }
 
 async function executeQuery(connection, query, values = [], opts = {}) {
-    const { log = true, timeoutMs = 200000 } = opts;
+    const { log = false, timeoutMs = 200000 } = opts;
 
     try {
         if (log) logYellow(`Ejecutando: ${query} con valores: ${JSON.stringify(values)}`);
