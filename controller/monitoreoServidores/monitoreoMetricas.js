@@ -37,7 +37,7 @@ async function monitoreoRecursos(
         { key: "backgps", url: "http://backgps2.lightdata.com.ar/_sat/metrics" },
         { key: "colecta", url: "http://colecta.lightdata.app/_sat/metrics" },
         { key: "aplanta", url: "http://aplanta.lightdata.app/_sat/metrics" },
-        { key: "altaEnvios", url: "http://altaenvios.lightdata.com.ar/_sat/metrics" },
+        { key: "produccion", url: "http://altaenvios.lightdata.com.ar/_sat/metrics" },
         { key: "fulfillment", url: "http://ffull.lightdata.app/_sat/metrics" },
         { key: "ffmobile", url: "http://ffmovil.lightdata.app/_sat/metrics" },
         { key: "callback", url: "http://whml.lightdata.app/_sat/metrics" },

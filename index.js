@@ -8,6 +8,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const { fork } = require("child_process");
+const { startMonitoreoBd } = require("./controller/monitoreoServidores/cronMonitoreoBd.js");
 
 const isJobsChild = process.argv.includes("--jobs-child");
 
@@ -249,6 +250,7 @@ async function startJobs() {
      });
  */
     startMonitoreoJob();
+    startMonitoreoBd();
     startMonitoreoMetricas();
 
     process.on("SIGINT", async () => {
