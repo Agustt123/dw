@@ -7,6 +7,7 @@ const { monitoreo } = require('../controller/monitoreoServidores/monitoreo');
 
 const { getMonitoreo } = require('../controller/monitoreoServidores/getMonitoreo');
 const { obtenerMetricasUltimaCorrida } = require('../controller/monitoreoServidores/cronMonitoreo');
+const { obtenerMetricasProcesslist } = require('../fuctions/showProcesList');
 
 const monitorear = express.Router();
 
@@ -56,7 +57,19 @@ monitorear.get('/metricas', async (req, res) => {
     }
 });
 
+monitorear.get('/metricas', async (req, res) => {
 
+    const db = await getConnectionLocalCdc();
+    try {
+        const resultado = await obtenerMetricasProcesslist(db);
+        return res.status(200).json({ estado: true, data: resultado });
+    } catch (error) {
+        console.error("Error /testLocal:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
+    } finally {
+
+    }
+});
 
 
 module.exports = monitorear;
