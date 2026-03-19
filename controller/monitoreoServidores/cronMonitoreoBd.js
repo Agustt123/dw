@@ -3,7 +3,7 @@ const { getConnectionLocalCdc } = require("../../db");
 const { monitoreoBd } = require("./monitoreoBd");
 
 function startMonitoreoBd() {
-    cron.schedule("*/1 * * * *", async () => {
+    cron.schedule("*/10 * * * *", async () => {
         const db = await getConnectionLocalCdc();
         try {
             await monitoreoBd(db);
