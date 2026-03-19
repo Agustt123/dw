@@ -169,9 +169,6 @@ async function monitoreoRecursos(
     }
 
     // 3) Agregamos un DID MÁS para el "microservicio conjunto" con máximos
-    const didConjunto = await getNextDid(db);
-    if (!didConjunto) throw new Error("No se pudo obtener didConjunto.");
-
     const latenciaMax = maxOrNull(results.map((r) => r.latenciaMs));
     const usoRamMax = maxOrNull(results.map((r) => r.usoRam));
     const usoCpuMax = maxOrNull(results.map((r) => r.usoCpu));
@@ -186,7 +183,7 @@ async function monitoreoRecursos(
     const okConjunto = results.some((r) => r.ok === 1) ? 1 : 0;
 
     const valuesConjunto = [
-        didConjunto,
+        did,
         "conjunto",
         "ALL",
         okConjunto,
@@ -205,7 +202,7 @@ async function monitoreoRecursos(
     await executeQuery(db, insertSql, valuesConjunto);
 
     const conjuntoRow = {
-        did: didConjunto,
+        did,
         servidor: "conjunto",
         endpoint: "ALL",
         ok: okConjunto,
@@ -223,7 +220,7 @@ async function monitoreoRecursos(
 
     return {
         did,
-        didConjunto,
+        didConjunto: did,
         results,
         conjunto: conjuntoRow,
     };

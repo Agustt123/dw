@@ -151,9 +151,6 @@ async function monitoreoBd(
         });
     }
 
-    const didConjunto = await getNextDid(db);
-    if (!didConjunto) throw new Error("No se pudo obtener didConjunto.");
-
     const procesosTotal = sumOrNull(results.map((r) => r.procesos));
     const totalSegundosTotal = sumOrNull(results.map((r) => r.total_segundos));
     const promedioSegundosAvg = avgOrNull(results.map((r) => r.promedio_segundos));
@@ -162,7 +159,7 @@ async function monitoreoBd(
     const okConjunto = results.some((r) => r.ok === 1) ? 1 : 0;
 
     const valuesConjunto = [
-        didConjunto,
+        did,
         "conjunto",
         "ALL",
         okConjunto,
@@ -179,10 +176,10 @@ async function monitoreoBd(
 
     return {
         did,
-        didConjunto,
+        didConjunto: did,
         results,
         conjunto: {
-            did: didConjunto,
+            did,
             servidor: "conjunto",
             endpoint: "ALL",
             ok: okConjunto,
@@ -226,30 +223,34 @@ async function obtenerUltimoMonitoreoBd(db) {
         []
     );
 
-    const conjunto = await executeQuery(
-        db,
-        `
-        SELECT
-            id,
-            did,
-            autofecha,
-            servidor,
-            endpoint,
-            ok,
-            codigoHttp,
-            latenciaMs,
-            error,
-            procesos,
-            total_segundos,
-            promedio_segundos,
-            max_segundos
-        FROM sat_monitoreo_db
-        WHERE servidor = 'conjunto'
-        ORDER BY id DESC
-        LIMIT 1
-        `,
-        []
-    );
+    const did = rows?.[0]?.did || null;
+
+    const conjunto = did === null
+        ? []
+        : await executeQuery(
+            db,
+            `
+            SELECT
+                id,
+                did,
+                autofecha,
+                servidor,
+                endpoint,
+                ok,
+                codigoHttp,
+                latenciaMs,
+                error,
+                procesos,
+                total_segundos,
+                promedio_segundos,
+                max_segundos
+            FROM sat_monitoreo_db
+            WHERE did = ? AND servidor = 'conjunto'
+            ORDER BY id DESC
+            LIMIT 1
+            `,
+            [did]
+        );
 
     return {
         todos: rows,
