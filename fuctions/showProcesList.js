@@ -1,3 +1,5 @@
+const { executeQuery } = require("../db");
+
 async function obtenerMetricasProcesslist(connection) {
     const query = `
         SELECT 
