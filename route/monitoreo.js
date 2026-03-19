@@ -57,7 +57,7 @@ monitorear.get('/metricas', async (req, res) => {
     }
 });
 
-monitorear.get('/metricas', async (req, res) => {
+monitorear.get('/procesos', async (req, res) => {
 
     const db = await getConnectionLocalCdc();
     try {
