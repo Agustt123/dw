@@ -207,6 +207,11 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 didOwner
             };
 
+            // Algunas empresas traen didDeposito en null, pero en DW la columna es NOT NULL.
+            if (envioDW.didDeposito === null || envioDW.didDeposito === undefined || envioDW.didDeposito === "") {
+                envioDW.didDeposito = 0;
+            }
+
             const envioFiltrado = {};
             for (const [k, v] of Object.entries(envioDW)) {
                 if (columnasEnviosDW.includes(k) && k !== "id") {
