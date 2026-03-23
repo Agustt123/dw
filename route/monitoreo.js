@@ -11,6 +11,8 @@ const { obtenerMetricasUltimaCorrida } = require('../controller/monitoreoServido
 const { obtenerMetricasProcesslist } = require('../fuctions/showProcesList');
 const { insertarPeorPct } = require('../controller/monitoreoServidores/insertarPeorpct');
 const { insertarNotificacionesUltima } = require('../controller/monitoreoServidores/insertarNotificacionesUltima');
+const { obtenerUltimoPeorPct } = require('../controller/monitoreoServidores/obtenerUltimoPeorPct');
+const { obtenerUltimaNotificacion } = require('../controller/monitoreoServidores/obtenerUltimaNotificacion');
 
 const monitorear = express.Router();
 
@@ -109,6 +111,19 @@ monitorear.post('/peor-pct', async (req, res) => {
     }
 });
 
+monitorear.get('/peor-pct', async (req, res) => {
+    try {
+        const resultado = await obtenerUltimoPeorPct();
+        return res.status(200).json({
+            estado: true,
+            data: resultado
+        });
+    } catch (error) {
+        console.error("Error GET /peor-pct:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
+    }
+});
+
 monitorear.post('/notificaciones-ultima', async (req, res) => {
     try {
         const resultado = await insertarNotificacionesUltima(req.body);
@@ -121,6 +136,19 @@ monitorear.post('/notificaciones-ultima', async (req, res) => {
         return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
     } finally {
 
+    }
+});
+
+monitorear.get('/notificaciones-ultima', async (req, res) => {
+    try {
+        const resultado = await obtenerUltimaNotificacion();
+        return res.status(200).json({
+            estado: true,
+            data: resultado
+        });
+    } catch (error) {
+        console.error("Error GET /notificaciones-ultima:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
     }
 });
 
