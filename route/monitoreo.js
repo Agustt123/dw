@@ -169,7 +169,7 @@ monitorear.post('/alerta', async (req, res) => {
 
 monitorear.get('/alerta', async (req, res) => {
     try {
-        const resultado = await obtenerUltimasAlertas();
+        const resultado = await obtenerUltimasAlertas(req.query.limit);
         return res.status(200).json({
             estado: true,
             data: resultado

@@ -10,11 +10,20 @@ function parseJsonValue(value) {
     }
 }
 
-async function obtenerUltimasAlertas() {
+function toLimit(value, fallback = 10) {
+    const parsed = Number.parseInt(value, 10);
+
+    if (Number.isNaN(parsed) || parsed <= 0) return fallback;
+
+    return Math.min(parsed, 100);
+}
+
+async function obtenerUltimasAlertas(limitParam) {
     let db;
 
     try {
         db = await getConnectionLocalCdc();
+        const limit = toLimit(limitParam, 10);
 
         const rows = await executeQuery(
             db,
@@ -35,8 +44,10 @@ async function obtenerUltimasAlertas() {
                     origen
                 FROM alertas
                 ORDER BY id DESC
-                LIMIT 50
+                LIMIT ?
             `
+            ,
+            [limit]
         );
 
         return (rows || []).map((row) => ({
