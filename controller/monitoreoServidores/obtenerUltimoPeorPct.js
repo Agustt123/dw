@@ -17,11 +17,11 @@ async function obtenerUltimoPeorPct() {
                     tiempo_imagen_ms
                 FROM notificaciones_peor
                 ORDER BY id DESC
-                LIMIT 30
+                LIMIT 1
             `
         );
 
-        return rows || null;
+        return rows?.[0] || null;
     } catch (error) {
         console.error("Error en obtenerUltimoPeorPct:", error);
         throw {
