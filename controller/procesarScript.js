@@ -47,7 +47,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
-        const query = `ALTER TABLE envios ADD didMetodoEnvio INT NOT NULL AFTER mode;
+        const query = `ALTER TABLE sistema_usuarios ADD comunicaciones_sistema INT NOT NULL DEFAULT '0' AFTER autofecha, ADD comunicaciones_facturacion INT NOT NULL DEFAULT '0' AFTER comunicaciones_sistema, ADD comunicaciones_pagos INT NOT NULL DEFAULT '0' AFTER comunicaciones_facturacion;
 `;
 
         for (const didOwnerStr of didOwners) {
