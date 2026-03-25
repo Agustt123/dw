@@ -21,7 +21,7 @@ async function obtenerUltimoPeorPct() {
             `
         );
 
-        return rows?.[0] || null;
+        return rows || null;
     } catch (error) {
         console.error("Error en obtenerUltimoPeorPct:", error);
         throw {
