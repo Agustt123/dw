@@ -13,6 +13,8 @@ const { insertarPeorPct } = require('../controller/monitoreoServidores/insertarP
 const { insertarNotificacionesUltima } = require('../controller/monitoreoServidores/insertarNotificacionesUltima');
 const { obtenerUltimoPeorPct } = require('../controller/monitoreoServidores/obtenerUltimoPeorPct');
 const { obtenerUltimaNotificacion } = require('../controller/monitoreoServidores/obtenerUltimaNotificacion');
+const { insertarAlerta } = require('../controller/monitoreoServidores/insertarAlerta');
+const { obtenerUltimasAlertas } = require('../controller/monitoreoServidores/obtenerUltimasAlertas');
 
 const monitorear = express.Router();
 
@@ -148,6 +150,32 @@ monitorear.get('/notificaciones-ultima', async (req, res) => {
         });
     } catch (error) {
         console.error("Error GET /notificaciones-ultima:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
+    }
+});
+
+monitorear.post('/alerta', async (req, res) => {
+    try {
+        const resultado = await insertarAlerta(req.body);
+        return res.status(200).json({
+            estado: true,
+            data: resultado
+        });
+    } catch (error) {
+        console.error("Error /alerta:", error);
+        return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
+    }
+});
+
+monitorear.get('/alerta', async (req, res) => {
+    try {
+        const resultado = await obtenerUltimasAlertas();
+        return res.status(200).json({
+            estado: true,
+            data: resultado
+        });
+    } catch (error) {
+        console.error("Error GET /alerta:", error);
         return res.status(500).json({ estado: false, mensaje: "Error en el servidor" });
     }
 });
