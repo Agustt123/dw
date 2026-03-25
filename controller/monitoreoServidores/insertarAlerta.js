@@ -1,5 +1,10 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
 
+function toInt(value, fallback = null) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? fallback : parsed;
+}
+
 function toJsonValue(value) {
     if (value === undefined || value === null || value === "") return null;
 
@@ -7,7 +12,7 @@ function toJsonValue(value) {
         try {
             return JSON.stringify(JSON.parse(value));
         } catch {
-            return JSON.stringify({ raw: value });
+            return JSON.stringify(value);
         }
     }
 
@@ -21,59 +26,72 @@ async function insertarAlerta(body = {}) {
         db = await getConnectionLocalCdc();
 
         const payload = {
-            token: body.token || null,
-            origen: body.origen || null,
-            modulo: body.modulo || null,
-            servicio: body.servicio || null,
-            tipo_alerta: body.tipo_alerta || body.tipo || "error",
-            sev: body.sev || "rojo",
+            did_notificaciones: toInt(body.did_notificaciones, null),
+            autofecha: body.autofecha || null,
+            sev: body.sev || null,
+            color: body.color || body.sev || "rojo",
+            porcentaje_error: toInt(body.porcentaje_error, null),
             titulo: body.titulo || "Alerta de monitoreo",
-            mensaje: body.mensaje || body.descripcion || null,
-            fecha_evento: body.fecha_evento || null,
+            resumen_alerta: body.resumen_alerta || null,
+            que_fallo: body.que_fallo || null,
+            detalle_alerta: toJsonValue(body.detalle_alerta),
+            origen: body.origen || null,
             image_url: body.image_url || null,
-            error_json: toJsonValue(body.error_json ?? body.error ?? body.detalle_error),
-            contexto_json: toJsonValue(body.contexto_json ?? body.contexto ?? body.payload),
+            token: body.token || null,
         };
 
         const result = await executeQuery(
             db,
             `
                 INSERT INTO alertas (
+                    did_notificaciones,
                     autofecha,
-                    token,
-                    origen,
-                    modulo,
-                    servicio,
-                    tipo_alerta,
                     sev,
+                    color,
+                    porcentaje_error,
                     titulo,
-                    mensaje,
-                    fecha_evento,
+                    resumen_alerta,
+                    que_fallo,
+                    detalle_alerta,
+                    origen,
                     image_url,
-                    error_json,
-                    contexto_json
-                ) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    token
+                ) VALUES (?, COALESCE(?, NOW()), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
-                payload.token,
-                payload.origen,
-                payload.modulo,
-                payload.servicio,
-                payload.tipo_alerta,
+                payload.did_notificaciones,
+                payload.autofecha,
                 payload.sev,
+                payload.color,
+                payload.porcentaje_error,
                 payload.titulo,
-                payload.mensaje,
-                payload.fecha_evento,
+                payload.resumen_alerta,
+                payload.que_fallo,
+                payload.detalle_alerta,
+                payload.origen,
                 payload.image_url,
-                payload.error_json,
-                payload.contexto_json,
+                payload.token,
             ]
         );
+
+        const rows = await executeQuery(
+            db,
+            `
+                SELECT id, autofecha
+                FROM alertas
+                WHERE id = ?
+                LIMIT 1
+            `,
+            [result?.insertId || 0]
+        );
+
+        const inserted = rows?.[0] || null;
 
         return {
             estado: true,
             message: "Alerta insertada correctamente",
             id: result?.insertId || 0,
+            autofecha: inserted?.autofecha || payload.autofecha || null,
             data: payload,
         };
     } catch (error) {

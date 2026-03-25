@@ -21,19 +21,18 @@ async function obtenerUltimasAlertas() {
             `
                 SELECT
                     id,
+                    did_notificaciones,
                     autofecha,
-                    token,
-                    origen,
-                    modulo,
-                    servicio,
-                    tipo_alerta,
                     sev,
+                    color,
+                    porcentaje_error,
                     titulo,
-                    mensaje,
-                    fecha_evento,
+                    resumen_alerta,
+                    que_fallo,
+                    detalle_alerta,
+                    token,
                     image_url,
-                    error_json,
-                    contexto_json
+                    origen
                 FROM alertas
                 ORDER BY id DESC
                 LIMIT 50
@@ -42,8 +41,7 @@ async function obtenerUltimasAlertas() {
 
         return (rows || []).map((row) => ({
             ...row,
-            error_json: parseJsonValue(row.error_json),
-            contexto_json: parseJsonValue(row.contexto_json),
+            detalle_alerta: parseJsonValue(row.detalle_alerta),
         }));
     } catch (error) {
         console.error("Error en obtenerUltimasAlertas:", error);
