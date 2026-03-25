@@ -17,7 +17,7 @@ async function obtenerUltimoPeorPct() {
                     tiempo_imagen_ms
                 FROM notificaciones_peor
                 ORDER BY id DESC
-                LIMIT 1
+                LIMIT 30
             `
         );
 
