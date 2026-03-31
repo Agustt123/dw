@@ -2,6 +2,7 @@ const { executeQuery } = require("../../db");
 
 const ESTADO_ANY = 999;
 const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
+const CANTIDAD_PAQUETES_TIMEOUT_MS = 600000;
 function mesNombreES(fechaYYYYMMDD) {
   const MESES = [
     "Enero",
@@ -41,7 +42,9 @@ async function cantidadGlobalDia(conn, fecha) {
       AND estado     = ?;
   `;
 
-  const rows = await executeQuery(conn, sql, [fecha, ESTADO_ANY], true);
+  const rows = await executeQuery(conn, sql, [fecha, ESTADO_ANY], {
+    timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
+  });
   const cantidad = Number(rows?.[0]?.cantidad ?? 0);
 
   return { ok: true, cantidad, fecha };
@@ -107,7 +110,9 @@ async function cantidadGlobalMesYDia(conn, fecha) {
     ESTADO_MOV_HOY, fecha     // hoyMovimiento
   ];
 
-  const rows = await executeQuery(conn, sql, params, true);
+  const rows = await executeQuery(conn, sql, params, {
+    timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
+  });
 
   const hoy = Number(rows?.[0]?.hoy ?? 0);
   const mes = Number(rows?.[0]?.mes ?? 0);
