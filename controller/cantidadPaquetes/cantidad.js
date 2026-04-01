@@ -1,8 +1,10 @@
-const { executeQuery } = require("../../db");
+const { executeQuery, redisClient } = require("../../db");
 
 const ESTADO_ANY = 999;
 const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
 const CANTIDAD_PAQUETES_TIMEOUT_MS = 600000;
+const CANTIDAD_CACHE_TTL_SECONDS = 60;
+const cantidadCacheEnVuelo = new Map();
 
 function mesNombreES(fechaYYYYMMDD) {
   const MESES = [
@@ -53,6 +55,36 @@ function getFechaPartes(fecha) {
   };
 }
 
+function getCantidadCacheKey(fecha) {
+  return `cantidad:global:${fecha}`;
+}
+
+async function getCantidadCache(fecha) {
+  try {
+    const raw = await redisClient.get(getCantidadCacheKey(fecha));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function setCantidadCache(fecha, value) {
+  try {
+    await redisClient.setEx(
+      getCantidadCacheKey(fecha),
+      CANTIDAD_CACHE_TTL_SECONDS,
+      JSON.stringify(value)
+    );
+  } catch (_) {
+    // Si Redis falla, no rompemos el endpoint.
+  }
+}
+
 async function contarPaquetes(conn, whereSql, params) {
   const sql = `
     SELECT
@@ -78,6 +110,58 @@ async function contarPaquetes(conn, whereSql, params) {
   return Number(rows?.[0]?.cantidad ?? 0);
 }
 
+async function obtenerCantidadResumen(conn, fecha) {
+  const { inicioMes, inicioMesSiguiente, inicioAnio, inicioAnioSiguiente } =
+    getFechaPartes(fecha);
+
+  const sql = `
+    SELECT
+      COALESCE(SUM(CASE WHEN estado = ? AND dia = ? THEN cantidadFila ELSE 0 END), 0) AS hoy,
+      COALESCE(SUM(CASE WHEN estado = ? AND dia >= ? AND dia < ? THEN cantidadFila ELSE 0 END), 0) AS mes,
+      COALESCE(SUM(CASE WHEN estado = ? THEN cantidadFila ELSE 0 END), 0) AS anio,
+      COALESCE(SUM(CASE WHEN estado = ? AND dia = ? THEN cantidadFila ELSE 0 END), 0) AS hoyMovimiento
+    FROM (
+      SELECT
+        dia,
+        estado,
+        CASE
+          WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
+          ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
+        END AS cantidadFila
+      FROM home_app
+      WHERE didCliente = 0
+        AND didChofer = 0
+        AND dia >= ?
+        AND dia < ?
+        AND estado IN (?, ?)
+    ) base
+  `;
+
+  const rows = await executeQuery(
+    conn,
+    sql,
+    [
+      ESTADO_ANY,
+      fecha,
+      ESTADO_ANY,
+      inicioMes,
+      inicioMesSiguiente,
+      ESTADO_ANY,
+      ESTADO_MOV_HOY,
+      fecha,
+      inicioAnio,
+      inicioAnioSiguiente,
+      ESTADO_ANY,
+      ESTADO_MOV_HOY,
+    ],
+    {
+      timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
+    }
+  );
+
+  return rows?.[0] || {};
+}
+
 async function cantidadGlobalDia(conn, fecha) {
   const cantidad = await contarPaquetes(
     conn,
@@ -90,33 +174,12 @@ async function cantidadGlobalDia(conn, fecha) {
 
 // Devuelve total del mes + total del dia (para la fecha que mandes)
 async function cantidadGlobalMesYDia(conn, fecha) {
-  const { mesPrefix, inicioMes, inicioMesSiguiente, inicioAnio, inicioAnioSiguiente } =
-    getFechaPartes(fecha);
-
-  const hoy = await contarPaquetes(
-    conn,
-    "dia = ? AND estado = ?",
-    [fecha, ESTADO_ANY]
-  );
-
-  const mes = await contarPaquetes(
-    conn,
-    "dia >= ? AND dia < ? AND estado = ?",
-    [inicioMes, inicioMesSiguiente, ESTADO_ANY]
-  );
-
-  const anioCantidad = await contarPaquetes(
-    conn,
-    "dia >= ? AND dia < ? AND estado = ?",
-    [inicioAnio, inicioAnioSiguiente, ESTADO_ANY]
-  );
-
-  const hoyMovimiento = await contarPaquetes(
-    conn,
-    "dia = ? AND estado = ?",
-    [fecha, ESTADO_MOV_HOY]
-  );
-
+  const { mesPrefix } = getFechaPartes(fecha);
+  const resumen = await obtenerCantidadResumen(conn, fecha);
+  const hoy = Number(resumen?.hoy ?? 0);
+  const mes = Number(resumen?.mes ?? 0);
+  const anioCantidad = Number(resumen?.anio ?? 0);
+  const hoyMovimiento = Number(resumen?.hoyMovimiento ?? 0);
   const nombre = mesNombreES(fecha);
 
   return {
@@ -132,4 +195,38 @@ async function cantidadGlobalMesYDia(conn, fecha) {
   };
 }
 
-module.exports = { cantidadGlobalDia, cantidadGlobalMesYDia };
+async function cantidadGlobalMesYDiaCached(connFactory, fecha) {
+  const cached = await getCantidadCache(fecha);
+  if (cached) return cached;
+
+  const cacheKey = getCantidadCacheKey(fecha);
+  if (cantidadCacheEnVuelo.has(cacheKey)) {
+    return cantidadCacheEnVuelo.get(cacheKey);
+  }
+
+  const pending = (async () => {
+    let conn;
+    try {
+      conn = await connFactory();
+      const resultado = await cantidadGlobalMesYDia(conn, fecha);
+      await setCantidadCache(fecha, resultado);
+      return resultado;
+    } finally {
+      cantidadCacheEnVuelo.delete(cacheKey);
+      if (conn?.release) {
+        try {
+          conn.release();
+        } catch (_) {}
+      }
+    }
+  })();
+
+  cantidadCacheEnVuelo.set(cacheKey, pending);
+  return pending;
+}
+
+module.exports = {
+  cantidadGlobalDia,
+  cantidadGlobalMesYDia,
+  cantidadGlobalMesYDiaCached,
+};

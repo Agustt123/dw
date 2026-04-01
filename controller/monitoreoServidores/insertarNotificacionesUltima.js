@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function toInt(value, fallback = 0) {
     const parsed = Number.parseInt(value, 10);
@@ -103,7 +104,8 @@ async function insertarNotificacionesUltima(body = {}) {
                 payload.sat_afectados,
                 payload.peor_pct,
                 payload.tiempo_imagen_ms,
-            ]
+            ],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         return {

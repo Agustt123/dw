@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function toInt(value, fallback = null) {
     const parsed = Number.parseInt(value, 10);
@@ -71,7 +72,8 @@ async function insertarAlerta(body = {}) {
                 payload.origen,
                 payload.image_url,
                 payload.token,
-            ]
+            ],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         const rows = await executeQuery(
@@ -82,7 +84,8 @@ async function insertarAlerta(body = {}) {
                 WHERE id = ?
                 LIMIT 1
             `,
-            [result?.insertId || 0]
+            [result?.insertId || 0],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         const inserted = rows?.[0] || null;

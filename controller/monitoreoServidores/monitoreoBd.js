@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function toNumberOrNull(v) {
     const n = Number(v);
@@ -14,7 +15,8 @@ async function getNextDid(db) {
     const rows = await executeQuery(
         db,
         "SELECT IFNULL(MAX(did), 0) + 1 AS did FROM sat_monitoreo_db",
-        []
+        [],
+        { timeoutMs: MONITOREO_TIMEOUT_MS }
     );
     return rows?.[0]?.did;
 }
@@ -60,7 +62,7 @@ async function monitoreoBd(
     ],
     options = {}
 ) {
-    const timeoutMs = options.timeoutMs ?? 2000;
+    const timeoutMs = options.timeoutMs ?? MONITOREO_TIMEOUT_MS;
 
     const did = await getNextDid(db);
     if (!did) throw new Error("No se pudo obtener did.");
@@ -134,7 +136,7 @@ async function monitoreoBd(
             maxSegundos,
         ];
 
-        await executeQuery(db, insertSql, values);
+        await executeQuery(db, insertSql, values, { timeoutMs: MONITOREO_TIMEOUT_MS });
 
         results.push({
             did,
@@ -172,7 +174,7 @@ async function monitoreoBd(
         maxSegundosMax,
     ];
 
-    await executeQuery(db, insertSql, valuesConjunto);
+    await executeQuery(db, insertSql, valuesConjunto, { timeoutMs: MONITOREO_TIMEOUT_MS });
 
     return {
         did,
@@ -220,7 +222,8 @@ async function obtenerUltimoMonitoreoBd(db) {
         )
         ORDER BY id ASC
         `,
-        []
+        [],
+        { timeoutMs: MONITOREO_TIMEOUT_MS }
     );
 
     const did = rows?.[0]?.did || null;
@@ -249,7 +252,8 @@ async function obtenerUltimoMonitoreoBd(db) {
             ORDER BY id DESC
             LIMIT 1
             `,
-            [did]
+            [did],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
     return {

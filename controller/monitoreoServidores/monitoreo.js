@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 async function monitoreo(db, services = [
     { key: "asignaciones", url: "http://asignaciones.lightdata.app/ping" },
@@ -22,7 +23,7 @@ async function monitoreo(db, services = [
         try {
             const t0 = process.hrtime.bigint();
             await axios.get(s.url, {
-                timeout: 2000,
+                timeout: MONITOREO_TIMEOUT_MS,
                 validateStatus: () => true
             });
             const t1 = process.hrtime.bigint();
@@ -46,7 +47,7 @@ async function monitoreo(db, services = [
     VALUES (${placeholders})
   `;
 
-    await executeQuery(db, sql, values);
+    await executeQuery(db, sql, values, { timeoutMs: MONITOREO_TIMEOUT_MS });
     return row;
 }
 

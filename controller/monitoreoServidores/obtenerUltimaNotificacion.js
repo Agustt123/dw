@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function parseJsonValue(value) {
     if (value === null || value === undefined || value === "") return null;
@@ -45,7 +46,9 @@ async function obtenerUltimaNotificacion() {
                 FROM notificaciones_detalle
                 ORDER BY id DESC
                 LIMIT 1
-            `
+            `,
+            [],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         const row = rows?.[0];

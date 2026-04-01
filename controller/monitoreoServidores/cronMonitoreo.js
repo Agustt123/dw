@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 const { monitoreo } = require("./monitoreo");
 
@@ -31,7 +32,8 @@ async function obtenerMetricasUltimaCorrida() {
         const didRows = await executeQuery(
             db,
             "SELECT IFNULL(MAX(did), 0) AS did FROM sat_monitoreo_recursos",
-            []
+            [],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         const did = Number(didRows?.[0]?.did ?? 0);
@@ -63,7 +65,8 @@ async function obtenerMetricasUltimaCorrida() {
        servidor = ?
       ORDER BY id DESC LIMIT 1
       `,
-            ["conjunto"]
+            ["conjunto"],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         return { rows };

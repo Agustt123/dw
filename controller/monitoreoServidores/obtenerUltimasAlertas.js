@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function parseJsonValue(value) {
     if (value === null || value === undefined || value === "") return null;
@@ -48,7 +49,8 @@ async function obtenerUltimasAlertas(limitParam) {
                 LIMIT ?
             `
             ,
-            [limit]
+            [limit],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         return (rows || []).map((row) => ({

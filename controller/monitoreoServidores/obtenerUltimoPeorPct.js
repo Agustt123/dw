@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 async function obtenerUltimoPeorPct() {
     let db;
@@ -18,7 +19,9 @@ async function obtenerUltimoPeorPct() {
                 FROM notificaciones_peor
                 ORDER BY id DESC
                 LIMIT 30
-            `
+            `,
+            [],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         return rows || null;

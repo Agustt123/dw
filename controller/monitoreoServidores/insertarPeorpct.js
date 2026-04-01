@@ -1,4 +1,5 @@
 const { getConnectionLocalCdc, executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function toInt(value, fallback = 0) {
     const parsed = Number.parseInt(value, 10);
@@ -33,7 +34,8 @@ async function insertarPeorPct(body = {}) {
                 payload.cantidad_dia,
                 payload.peor_pct,
                 payload.tiempo_imagen_ms,
-            ]
+            ],
+            { timeoutMs: MONITOREO_TIMEOUT_MS }
         );
 
         return {

@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { executeQuery } = require("../../db");
+const MONITOREO_TIMEOUT_MS = 5000;
 
 function toNumberOrNull(v) {
     const n = Number(v);
@@ -15,7 +16,8 @@ async function getNextDid(db) {
     const rows = await executeQuery(
         db,
         "SELECT IFNULL(MAX(did), 0) + 1 AS did FROM sat_monitoreo_recursos",
-        []
+        [],
+        { timeoutMs: MONITOREO_TIMEOUT_MS }
     );
     return rows?.[0]?.did;
 }
@@ -49,7 +51,7 @@ async function monitoreoRecursos(
     ],
     options = {}
 ) {
-    const timeoutMs = options.timeoutMs ?? 2000;
+    const timeoutMs = options.timeoutMs ?? MONITOREO_TIMEOUT_MS;
 
     // 1) did único para TODA la corrida (por microservicio)
     const did = await getNextDid(db);
@@ -148,7 +150,7 @@ async function monitoreoRecursos(
             cpuProceso,
         ];
 
-        await executeQuery(db, insertSql, values);
+        await executeQuery(db, insertSql, values, { timeoutMs: MONITOREO_TIMEOUT_MS });
 
         results.push({
             did,
@@ -199,7 +201,7 @@ async function monitoreoRecursos(
         cpuProcesoMax === null ? null : round1(cpuProcesoMax),
     ];
 
-    await executeQuery(db, insertSql, valuesConjunto);
+    await executeQuery(db, insertSql, valuesConjunto, { timeoutMs: MONITOREO_TIMEOUT_MS });
 
     const conjuntoRow = {
         did,
