@@ -1,4 +1,5 @@
 const { getConnection, getConnectionLocal, executeQuery, redisClient, getConnectionIndividual, getConnectionSistema } = require("../db");
+const EMPRESAS_BLOQUEADAS = new Set([275, 276, 345]);
 
 async function ejecutarQueryParaTodasLasEmpresas(query, values = []) {
     try {
@@ -47,7 +48,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
 
-        const query = `ALTER TABLE liquidaciones ADD dataLiquidaciones TEXT NOT NULL AFTER idlineas;
+        const query = `ALTER TABLE envios_historial ADD deposito INT(5) NULL DEFAULT NULL AFTER longitud;
 `;
 
         for (const didOwnerStr of didOwners) {
@@ -223,6 +224,7 @@ async function sistemaQuery() {
 
 async function contarEnviosTodasEmpresas() {
     try {
+        console.log("Iniciando conteo de envios...");
         const empresaDataStr = await redisClient.get("empresasData");
 
         if (!empresaDataStr) {
@@ -232,32 +234,36 @@ async function contarEnviosTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData);
+        console.log(`Empresas encontradas: ${didOwners.length}`);
 
-        const inicioDia = "2026-01-01 00:00:00";
-        const finDia = "2026-03-13 00:00:00";
+        const fechaInicioDesde = "2026-01-01 00:00:00";
 
         const countQuery = `
             SELECT COUNT(*) AS cantidad
-            FROM envios
-            WHERE fecha_inicio >= ?
-        
-              AND elim = 0
+            FROM envios_historial
+            WHERE fecha > ?
+      
         `;
-
-        const exclusions = new Set([275, 276, 345]);
 
         let totalGlobal = 0;
         const resultados = [];
+        let procesadas = 0;
+        let omitidas = 0;
 
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
             if (Number.isNaN(didOwner)) continue;
-            if (exclusions.has(didOwner)) continue;
+            if (EMPRESAS_BLOQUEADAS.has(didOwner)) {
+                omitidas += 1;
+                console.log(`Empresa ${didOwner} omitida por bloqueo`);
+                continue;
+            }
 
+            console.log(`Procesando empresa ${didOwner}...`);
             const conn = await getConnection(didOwner);
 
             try {
-                const rows = await executeQuery(conn, countQuery, [inicioDia, finDia]);
+                const rows = await executeQuery(conn, countQuery, [fechaInicioDesde], { timeoutMs: 120000 });
                 const cantidad = Number(rows?.[0]?.cantidad ?? 0);
 
                 resultados.push({
@@ -267,6 +273,8 @@ async function contarEnviosTodasEmpresas() {
                 });
 
                 totalGlobal += cantidad;
+                procesadas += 1;
+                console.log(`Empresa ${didOwner} => ${cantidad} envios`);
             } catch (err) {
                 console.error(`❌ Error contando envíos para empresa ${didOwner}:`, err.message);
             } finally {
@@ -278,6 +286,7 @@ async function contarEnviosTodasEmpresas() {
 
         console.log("====================================");
         console.log("📦 Cantidad de envíos por empresa:");
+        console.log(`📅 Condición: fecha_inicio > '${fechaInicioDesde}'`);
         console.log("====================================");
 
         resultados.forEach((r, index) => {
@@ -289,6 +298,14 @@ async function contarEnviosTodasEmpresas() {
         console.log("====================================");
         console.log(`✅ Total global de envíos: ${totalGlobal}`);
         console.log(`✅ Total de empresas procesadas: ${resultados.length}`);
+
+        console.log(`Total de empresas omitidas: ${omitidas}`);
+
+        return {
+            totalGlobal,
+            totalEmpresas: procesadas,
+            resultados
+        };
     } catch (err) {
         console.error("❌ Error general en contarEnviosTodasEmpresas:", err.message);
     }
@@ -406,14 +423,425 @@ async function contarPesoTablasTodasEmpresas() {
         console.error("❌ Error general en contarPesoTablasTodasEmpresas:", err.message);
     }
 }
-async function main() {
-    await corregirFechasHistorialTodasEmpresas();
+
+function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    const mb = value / 1024 / 1024;
+    const gb = value / 1024 / 1024 / 1024;
+
+    return {
+        bytes: value,
+        mb: mb.toFixed(2),
+        gb: gb.toFixed(2)
+    };
 }
 
-main();
+function daysBetween(startDateStr, endDateStr) {
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    const diffMs = end.getTime() - start.getTime();
+    return Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+async function resumenCapacidadEnviosHasta2028() {
+    try {
+        console.log("Iniciando resumen de capacidad de envios...");
+
+        const empresaDataStr = await redisClient.get("empresasData");
+
+        if (!empresaDataStr) {
+            console.error("No se encontro 'empresasData' en Redis.");
+            return;
+        }
+
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
+        const fechaInicioDesde = "2026-01-01 00:00:00";
+        const hoy = "2026-03-31 00:00:00";
+        const fechaProyeccion = "2028-12-31 00:00:00";
+
+        const countRowsQuery = `
+            SELECT
+                COUNT(*) AS totalFiltrado,
+                SUM(CASE WHEN elim = 0 THEN 1 ELSE 0 END) AS totalFiltradoNoElim
+            FROM envios
+            WHERE fecha_inicio > ?
+        `;
+
+        const totalRowsQuery = `
+            SELECT COUNT(*) AS totalTabla
+            FROM envios
+        `;
+
+        const tableSizeQuery = `
+            SELECT
+                table_name,
+                COALESCE(data_length, 0) + COALESCE(index_length, 0) AS total_bytes
+            FROM information_schema.tables
+            WHERE table_schema = ?
+              AND table_name IN ('envios', 'envios_historial', 'envios_asignaciones')
+        `;
+
+        let totalEstimadoBytes = 0;
+        let totalTablaBytes = 0;
+        let totalFiltrado = 0;
+        let totalFiltradoNoElim = 0;
+        let procesadas = 0;
+        let omitidas = 0;
+        const resultados = [];
+        const diasObservados = daysBetween(fechaInicioDesde, hoy);
+        const diasHasta2028 = daysBetween(hoy, fechaProyeccion);
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+
+            if (EMPRESAS_BLOQUEADAS.has(didOwner)) {
+                omitidas += 1;
+                continue;
+            }
+
+            let conn;
+
+            try {
+                console.log(`Estimando empresa ${didOwner}...`);
+                conn = await getConnection(didOwner);
+
+                const [rowsFiltrados, rowsTotales, sizeRows] = await Promise.all([
+                    executeQuery(conn, countRowsQuery, [fechaInicioDesde], { timeoutMs: 120000 }),
+                    executeQuery(conn, totalRowsQuery, [], { timeoutMs: 120000 }),
+                    executeQuery(conn, tableSizeQuery, [empresaData[didOwnerStr]?.dbname], { timeoutMs: 120000 })
+                ]);
+
+                const totalTabla = Number(rowsTotales?.[0]?.totalTabla ?? 0);
+                const filtrado = Number(rowsFiltrados?.[0]?.totalFiltrado ?? 0);
+                const filtradoNoElim = Number(rowsFiltrados?.[0]?.totalFiltradoNoElim ?? 0);
+                let totalBytesEnvios = 0;
+                let totalBytesHistorial = 0;
+                let totalBytesAsignaciones = 0;
+
+                for (const row of sizeRows || []) {
+                    const tableName = row.TABLE_NAME || row.table_name;
+                    const bytes = Number(row.total_bytes ?? 0);
+
+                    if (tableName === "envios") totalBytesEnvios = bytes;
+                    if (tableName === "envios_historial") totalBytesHistorial = bytes;
+                    if (tableName === "envios_asignaciones") totalBytesAsignaciones = bytes;
+                }
+
+                const totalBytesPaquete = totalBytesEnvios + totalBytesHistorial + totalBytesAsignaciones;
+                const proporcion = totalTabla > 0 ? (filtradoNoElim / totalTabla) : 0;
+                const estimadoBytesEnvios = totalBytesEnvios * proporcion;
+                const factorPaquete = totalBytesEnvios > 0 ? (totalBytesPaquete / totalBytesEnvios) : 1;
+                const estimadoBytesPaquete = estimadoBytesEnvios * factorPaquete;
+                const crecimientoDiarioBytes = estimadoBytesPaquete / diasObservados;
+                const proyeccionAdicionalBytes = crecimientoDiarioBytes * diasHasta2028;
+                const proyeccionTotal2028Bytes = totalBytesPaquete + proyeccionAdicionalBytes;
+                const nombreEmpresa = empresaData[didOwnerStr]?.nombre || `Empresa ${didOwner}`;
+
+                resultados.push({
+                    didOwner,
+                    nombreEmpresa,
+                    totalTabla,
+                    filtrado,
+                    filtradoNoElim,
+                    totalBytesEnvios,
+                    totalBytesHistorial,
+                    totalBytesAsignaciones,
+                    totalBytesPaquete,
+                    proporcion,
+                    estimadoBytesEnvios,
+                    estimadoBytesPaquete,
+                    factorPaquete,
+                    crecimientoDiarioBytes,
+                    proyeccionAdicionalBytes,
+                    proyeccionTotal2028Bytes
+                });
+
+                totalTablaBytes += totalBytesPaquete;
+                totalEstimadoBytes += estimadoBytesPaquete;
+                totalFiltrado += filtrado;
+                totalFiltradoNoElim += filtradoNoElim;
+                procesadas += 1;
+
+                const sizeFmt = formatBytes(estimadoBytesPaquete);
+                const totalFmt = formatBytes(totalBytesPaquete);
+                const proyFmt = formatBytes(proyeccionTotal2028Bytes);
+                console.log(
+                    `Empresa ${didOwner} - ${nombreEmpresa}: enero=${sizeFmt.gb} GB, historico=${totalFmt.gb} GB, proy2028=${proyFmt.gb} GB`
+                );
+            } catch (err) {
+                console.error(`Error estimando peso para empresa ${didOwner}:`, err.message);
+            } finally {
+                if (conn) await conn.release();
+            }
+        }
+
+        resultados.sort((a, b) => b.estimadoBytesPaquete - a.estimadoBytesPaquete);
+
+        console.log("====================================");
+        console.log("Mini resumen de capacidad");
+        console.log(`Ventana observada: ${fechaInicioDesde} -> ${hoy}`);
+        console.log(`Proyeccion hasta: ${fechaProyeccion}`);
+        console.log("====================================");
+
+        resultados.forEach((r, index) => {
+            const eneroFmt = formatBytes(r.estimadoBytesPaquete);
+            const totalFmt = formatBytes(r.totalBytesPaquete);
+            const proyFmt = formatBytes(r.proyeccionTotal2028Bytes);
+            console.log(
+                `${index + 1}. ${r.nombreEmpresa} (ID: ${r.didOwner}) => ` +
+                `enero+ ${eneroFmt.gb} GB | ` +
+                `historico ${totalFmt.gb} GB | ` +
+                `proy.2028 ${proyFmt.gb} GB`
+            );
+        });
+
+        const totalEstimadoFmt = formatBytes(totalEstimadoBytes);
+        const totalTablaFmt = formatBytes(totalTablaBytes);
+        const crecimientoDiarioTotalBytes = totalEstimadoBytes / diasObservados;
+        const proyeccionAdicionalTotalBytes = crecimientoDiarioTotalBytes * diasHasta2028;
+        const proyeccionTotal2028Bytes = totalTablaBytes + proyeccionAdicionalTotalBytes;
+        const proyeccionTotalFmt = formatBytes(proyeccionTotal2028Bytes);
+        const adicionalFmt = formatBytes(proyeccionAdicionalTotalBytes);
+        const margenCrecimientoBytes = proyeccionTotal2028Bytes * 0.3;
+        const pedidoConMargenBytes = proyeccionTotal2028Bytes + margenCrecimientoBytes;
+        const margenFmt = formatBytes(margenCrecimientoBytes);
+        const pedidoConMargenFmt = formatBytes(pedidoConMargenBytes);
+
+        console.log("====================================");
+        console.log(`Desde enero 2026: ${totalEstimadoFmt.gb} GB (${totalEstimadoFmt.mb} MB)`);
+        console.log(`Desde los inicios: ${totalTablaFmt.gb} GB (${totalTablaFmt.mb} MB)`);
+        console.log(`Crecimiento adicional estimado hasta fines de 2028: ${adicionalFmt.gb} GB (${adicionalFmt.mb} MB)`);
+        console.log(`Espacio estimado total para pedir hasta 2028: ${proyeccionTotalFmt.gb} GB (${proyeccionTotalFmt.mb} MB)`);
+        console.log(`Margen sugerido por crecimiento extra (30%): ${margenFmt.gb} GB (${margenFmt.mb} MB)`);
+        console.log(`Espacio recomendado a pedir con margen: ${pedidoConMargenFmt.gb} GB (${pedidoConMargenFmt.mb} MB)`);
+        console.log(`Filas enero 2026 no elim: ${totalFiltradoNoElim}`);
+        console.log(`Filas historicas totales: ${resultados.reduce((acc, r) => acc + r.totalTabla, 0)}`);
+        console.log(`Empresas procesadas: ${procesadas}`);
+        console.log(`Empresas omitidas: ${omitidas}`);
+
+        return {
+            fechaInicioDesde,
+            hoy,
+            fechaProyeccion,
+            diasObservados,
+            diasHasta2028,
+            totalFiltrado,
+            totalFiltradoNoElim,
+            totalEmpresas: procesadas,
+            totalEmpresasOmitidas: omitidas,
+            totalEstimadoBytes,
+            totalTablaBytes,
+            proyeccionAdicionalTotalBytes,
+            proyeccionTotal2028Bytes,
+            margenCrecimientoBytes,
+            pedidoConMargenBytes,
+            resultados
+        };
+    } catch (err) {
+        console.error("Error general en resumenCapacidadEnviosHasta2028:", err.message);
+        throw err;
+    }
+}
+
+async function completarDidClientePorMlVendedorId() {
+    try {
+        console.log("Iniciando correccion de didCliente por ml_vendedor_id...");
+
+        const empresaDataStr = await redisClient.get("empresasData");
+
+        if (!empresaDataStr) {
+            console.error("No se encontro 'empresasData' en Redis.");
+            return;
+        }
+
+        const empresaData = JSON.parse(empresaDataStr);
+        const didOwners = Object.keys(empresaData);
+        const fechaInicioDesde = "2026-03-31 00:00:00";
+
+        const countPendientesQuery = `
+            SELECT COUNT(*) AS cantidad
+            FROM envios
+            WHERE didCliente = 0
+              AND fecha_inicio > ?
+              AND ml_vendedor_id IS NOT NULL
+              AND ml_vendedor_id <> ''
+        `;
+
+        const countSinMatchQuery = `
+            SELECT COUNT(*) AS cantidad
+            FROM envios e
+            WHERE e.didCliente = 0
+              AND e.fecha_inicio > ?
+              AND e.ml_vendedor_id IS NOT NULL
+              AND e.ml_vendedor_id <> ''
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM envios ref
+                  WHERE ref.ml_vendedor_id = e.ml_vendedor_id
+                    AND ref.didCliente <> 0
+              )
+        `;
+
+        const updateQuery = `
+            UPDATE envios e
+            JOIN (
+                SELECT ref.ml_vendedor_id, ref.didCliente
+                FROM envios ref
+                JOIN (
+                    SELECT ml_vendedor_id, MAX(id) AS maxId
+                    FROM envios
+                    WHERE didCliente <> 0
+                      AND ml_vendedor_id IS NOT NULL
+                      AND ml_vendedor_id <> ''
+                    GROUP BY ml_vendedor_id
+                ) ult
+                    ON ult.ml_vendedor_id = ref.ml_vendedor_id
+                   AND ult.maxId = ref.id
+            ) mapa
+                ON mapa.ml_vendedor_id = e.ml_vendedor_id
+            SET e.didCliente = mapa.didCliente
+            WHERE e.didCliente = 0
+              AND e.fecha_inicio > ?
+              AND e.ml_vendedor_id IS NOT NULL
+              AND e.ml_vendedor_id <> ''
+        `;
+
+        const sampleActualizadosQuery = `
+            SELECT id, ml_vendedor_id, didCliente, fecha_inicio
+            FROM envios
+            WHERE didCliente <> 0
+              AND fecha_inicio > ?
+              AND ml_vendedor_id IS NOT NULL
+              AND ml_vendedor_id <> ''
+            ORDER BY id DESC
+            LIMIT 10
+        `;
+
+        let totalEmpresas = 0;
+        let totalOmitidas = 0;
+        let totalPendientes = 0;
+        let totalActualizados = 0;
+        let totalSinMatch = 0;
+        const resumen = [];
+
+        for (const didOwnerStr of didOwners) {
+            const didOwner = parseInt(didOwnerStr, 10);
+            if (Number.isNaN(didOwner)) continue;
+
+            if (EMPRESAS_BLOQUEADAS.has(didOwner)) {
+                totalOmitidas += 1;
+                continue;
+            }
+
+            let conn;
+
+            try {
+                console.log(`Procesando empresa ${didOwner}...`);
+                conn = await getConnection(didOwner);
+
+                const pendientesAntesRows = await executeQuery(conn, countPendientesQuery, [fechaInicioDesde], { timeoutMs: 120000 });
+                const pendientesAntes = Number(pendientesAntesRows?.[0]?.cantidad ?? 0);
+
+                if (pendientesAntes === 0) {
+                    resumen.push({
+                        didOwner,
+                        nombreEmpresa: empresaData[didOwnerStr]?.nombre || `Empresa ${didOwner}`,
+                        pendientesAntes: 0,
+                        actualizados: 0,
+                        sinMatch: 0
+                    });
+                    totalEmpresas += 1;
+                    console.log(`Empresa ${didOwner}: sin registros para corregir`);
+                    continue;
+                }
+
+                await executeQuery(conn, updateQuery, [fechaInicioDesde], { timeoutMs: 120000 });
+
+                const pendientesDespuesRows = await executeQuery(conn, countPendientesQuery, [fechaInicioDesde], { timeoutMs: 120000 });
+                const sinMatchRows = await executeQuery(conn, countSinMatchQuery, [fechaInicioDesde], { timeoutMs: 120000 });
+                const muestraRows = await executeQuery(conn, sampleActualizadosQuery, [fechaInicioDesde], { timeoutMs: 120000 });
+
+                const pendientesDespues = Number(pendientesDespuesRows?.[0]?.cantidad ?? 0);
+                const sinMatch = Number(sinMatchRows?.[0]?.cantidad ?? 0);
+                const actualizados = Math.max(0, pendientesAntes - pendientesDespues);
+                const nombreEmpresa = empresaData[didOwnerStr]?.nombre || `Empresa ${didOwner}`;
+
+                resumen.push({
+                    didOwner,
+                    nombreEmpresa,
+                    pendientesAntes,
+                    actualizados,
+                    sinMatch,
+                    muestra: muestraRows
+                });
+
+                totalEmpresas += 1;
+                totalPendientes += pendientesAntes;
+                totalActualizados += actualizados;
+                totalSinMatch += sinMatch;
+
+                console.log(
+                    `Empresa ${didOwner} - ${nombreEmpresa}: pendientes=${pendientesAntes}, actualizados=${actualizados}, sinMatch=${sinMatch}`
+                );
+            } catch (err) {
+                console.error(`Error corrigiendo empresa ${didOwner}:`, err.message);
+            } finally {
+                if (conn) await conn.release();
+            }
+        }
+
+        resumen.sort((a, b) => b.actualizados - a.actualizados || b.pendientesAntes - a.pendientesAntes);
+
+        console.log("====================================");
+        console.log(`Resumen correccion didCliente por ml_vendedor_id desde ${fechaInicioDesde}`);
+        console.log("====================================");
+
+        resumen.forEach((item, index) => {
+            console.log(
+                `${index + 1}. ${item.nombreEmpresa} (ID: ${item.didOwner}) => ` +
+                `pendientes=${item.pendientesAntes}, actualizados=${item.actualizados}, sinMatch=${item.sinMatch}`
+            );
+        });
+
+        console.log("====================================");
+        console.log(`Empresas procesadas: ${totalEmpresas}`);
+        console.log(`Empresas omitidas: ${totalOmitidas}`);
+        console.log(`Total pendientes detectados: ${totalPendientes}`);
+        console.log(`Total actualizados: ${totalActualizados}`);
+        console.log(`Total sin match: ${totalSinMatch}`);
+
+        return {
+            fechaInicioDesde,
+            totalEmpresas,
+            totalOmitidas,
+            totalPendientes,
+            totalActualizados,
+            totalSinMatch,
+            resumen
+        };
+    } catch (err) {
+        console.error("Error general en completarDidClientePorMlVendedorId:", err.message);
+        throw err;
+    }
+}
+
+async function main() {
+    console.log("Ejecutando procesarScript...");
+    await resumenCapacidadEnviosHasta2028();
+    console.log("Fin de procesarScript");
+}
+
+main().catch((err) => {
+    console.error("Error fatal en procesarScript:", err?.message || err);
+});
 
 
 module.exports = {
     ejecutarQueryParaTodasLasEmpresas,
-    corregirFechasHistorialTodasEmpresas
+    corregirFechasHistorialTodasEmpresas,
+    contarEnviosTodasEmpresas,
+    resumenCapacidadEnviosHasta2028,
+    completarDidClientePorMlVendedorId
 };

@@ -3,6 +3,7 @@ const { executeQuery } = require("../../db");
 const ESTADO_ANY = 999;
 const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
 const CANTIDAD_PAQUETES_TIMEOUT_MS = 600000;
+
 function mesNombreES(fechaYYYYMMDD) {
   const MESES = [
     "Enero",
@@ -25,99 +26,96 @@ function mesNombreES(fechaYYYYMMDD) {
   return MESES[mesNum - 1] || "";
 }
 
+function getFechaPartes(fecha) {
+  const [anioStr, mesStr, diaStr] = String(fecha || "").split("-");
+  const anio = Number(anioStr);
+  const mes = Number(mesStr);
+  const dia = Number(diaStr);
 
-async function cantidadGlobalDia(conn, fecha) {
-  const sql = `
-    SELECT
-      SUM(
-        CASE
-          WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
-          ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-        END
-      ) AS cantidad
-    FROM home_app
-    WHERE dia = ?
-      AND didCliente = 0
-      AND didChofer  = 0
-      AND estado     = ?;
-  `;
+  if (!anio || !mes || !dia) {
+    throw new Error(`Fecha invalida: ${fecha}`);
+  }
 
-  const rows = await executeQuery(conn, sql, [fecha, ESTADO_ANY], {
-    timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
-  });
-  const cantidad = Number(rows?.[0]?.cantidad ?? 0);
+  const pad = (n) => String(n).padStart(2, "0");
+  const inicioMes = `${anio}-${pad(mes)}-01`;
+  const inicioMesSiguiente =
+    mes === 12 ? `${anio + 1}-01-01` : `${anio}-${pad(mes + 1)}-01`;
+  const inicioAnio = `${anio}-01-01`;
+  const inicioAnioSiguiente = `${anio + 1}-01-01`;
 
-  return { ok: true, cantidad, fecha };
+  return {
+    anio,
+    mesPrefix: `${anio}-${pad(mes)}`,
+    inicioMes,
+    inicioMesSiguiente,
+    inicioAnio,
+    inicioAnioSiguiente,
+  };
 }
 
-// ✅ Devuelve total del mes + total del día (para la fecha que mandes)
-
-async function cantidadGlobalMesYDia(conn, fecha) {
-  const mesPrefix = String(fecha).slice(0, 7); // "YYYY-MM"
-  const anioPrefix = "2026";                   // fijo
-
+async function contarPaquetes(conn, whereSql, params) {
   const sql = `
     SELECT
-      -- HOY (999)
-      SUM(CASE
-        WHEN estado = ? AND dia = ? THEN
+      COALESCE(
+        SUM(
           CASE
             WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
             ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
           END
-        ELSE 0
-      END) AS hoy,
-
-      -- MES (999)
-      SUM(CASE
-        WHEN estado = ? AND dia LIKE CONCAT(?, '%') THEN
-          CASE
-            WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
-            ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-          END
-        ELSE 0
-      END) AS mes,
-
-      -- AÑO 2026 (999)  ✅ NUEVO
-      SUM(CASE
-        WHEN estado = ? AND dia LIKE CONCAT(?, '-%') THEN
-          CASE
-            WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
-            ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-          END
-        ELSE 0
-      END) AS anio,
-
-      -- HOY MOVIMIENTO (998)
-      SUM(CASE
-        WHEN estado = ? AND dia = ? THEN
-          CASE
-            WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
-            ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-          END
-        ELSE 0
-      END) AS hoyMovimiento
-
+        ),
+        0
+      ) AS cantidad
     FROM home_app
     WHERE didCliente = 0
-      AND didChofer  = 0
+      AND didChofer = 0
+      AND ${whereSql}
   `;
-
-  const params = [
-    ESTADO_ANY, fecha,        // hoy
-    ESTADO_ANY, mesPrefix,    // mes
-    ESTADO_ANY, anioPrefix,   // añoCantidad (2026)
-    ESTADO_MOV_HOY, fecha     // hoyMovimiento
-  ];
 
   const rows = await executeQuery(conn, sql, params, {
     timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
   });
 
-  const hoy = Number(rows?.[0]?.hoy ?? 0);
-  const mes = Number(rows?.[0]?.mes ?? 0);
-  const anioCantidad = Number(rows?.[0]?.anio ?? 0);
-  const hoyMovimiento = Number(rows?.[0]?.hoyMovimiento ?? 0);
+  return Number(rows?.[0]?.cantidad ?? 0);
+}
+
+async function cantidadGlobalDia(conn, fecha) {
+  const cantidad = await contarPaquetes(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_ANY]
+  );
+
+  return { ok: true, cantidad, fecha };
+}
+
+// Devuelve total del mes + total del dia (para la fecha que mandes)
+async function cantidadGlobalMesYDia(conn, fecha) {
+  const { mesPrefix, inicioMes, inicioMesSiguiente, inicioAnio, inicioAnioSiguiente } =
+    getFechaPartes(fecha);
+
+  const hoy = await contarPaquetes(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_ANY]
+  );
+
+  const mes = await contarPaquetes(
+    conn,
+    "dia >= ? AND dia < ? AND estado = ?",
+    [inicioMes, inicioMesSiguiente, ESTADO_ANY]
+  );
+
+  const anioCantidad = await contarPaquetes(
+    conn,
+    "dia >= ? AND dia < ? AND estado = ?",
+    [inicioAnio, inicioAnioSiguiente, ESTADO_ANY]
+  );
+
+  const hoyMovimiento = await contarPaquetes(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_MOV_HOY]
+  );
 
   const nombre = mesNombreES(fecha);
 
@@ -129,7 +127,8 @@ async function cantidadGlobalMesYDia(conn, fecha) {
     hoy,
     mesCantidad: mes,
     hoyMovimiento,
-    añoCantidad: anioCantidad, // ✅ NUEVO
+    añoCantidad: anioCantidad,
+    anioCantidad,
   };
 }
 
