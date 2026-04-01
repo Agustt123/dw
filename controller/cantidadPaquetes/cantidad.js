@@ -111,58 +111,6 @@ async function contarPaquetes(conn, whereSql, params) {
   return Number(rows?.[0]?.cantidad ?? 0);
 }
 
-async function obtenerCantidadResumen(conn, fecha) {
-  const { inicioMes, inicioMesSiguiente, inicioAnio, inicioAnioSiguiente } =
-    getFechaPartes(fecha);
-
-  const sql = `
-    SELECT
-      COALESCE(SUM(CASE WHEN estado = ? AND dia = ? THEN cantidadFila ELSE 0 END), 0) AS hoy,
-      COALESCE(SUM(CASE WHEN estado = ? AND dia >= ? AND dia < ? THEN cantidadFila ELSE 0 END), 0) AS mes,
-      COALESCE(SUM(CASE WHEN estado = ? THEN cantidadFila ELSE 0 END), 0) AS anio,
-      COALESCE(SUM(CASE WHEN estado = ? AND dia = ? THEN cantidadFila ELSE 0 END), 0) AS hoyMovimiento
-    FROM (
-      SELECT
-        dia,
-        estado,
-        CASE
-          WHEN didsPaquete IS NULL OR didsPaquete = '' THEN 0
-          ELSE 1 + (LENGTH(didsPaquete) - LENGTH(REPLACE(didsPaquete, ',', '')))
-        END AS cantidadFila
-      FROM home_app
-      WHERE didCliente = 0
-        AND didChofer = 0
-        AND dia >= ?
-        AND dia < ?
-        AND estado IN (?, ?)
-    ) base
-  `;
-
-  const rows = await executeQuery(
-    conn,
-    sql,
-    [
-      ESTADO_ANY,
-      fecha,
-      ESTADO_ANY,
-      inicioMes,
-      inicioMesSiguiente,
-      ESTADO_ANY,
-      ESTADO_MOV_HOY,
-      fecha,
-      inicioAnio,
-      inicioAnioSiguiente,
-      ESTADO_ANY,
-      ESTADO_MOV_HOY,
-    ],
-    {
-      timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
-    }
-  );
-
-  return rows?.[0] || {};
-}
-
 async function cantidadGlobalDia(conn, fecha) {
   const cantidad = await contarPaquetes(
     conn,
@@ -176,19 +124,26 @@ async function cantidadGlobalDia(conn, fecha) {
 // Devuelve total del mes + total del dia (para la fecha que mandes)
 async function cantidadGlobalMesYDia(conn, fecha) {
   const { anio, mesPrefix } = getFechaPartes(fecha);
-  const resumen = await obtenerCantidadResumen(conn, fecha);
-  const hoy = Number(resumen?.hoy ?? 0);
+  const hoy = await contarPaquetes(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_ANY]
+  );
   const mes = await contarPaquetes(
     conn,
-    "CAST(dia AS CHAR) LIKE CONCAT(?, '%') AND estado = ?",
+    "dia LIKE CONCAT(?, '%') AND estado = ?",
     [mesPrefix, ESTADO_ANY]
   );
   const anioCantidad = await contarPaquetes(
     conn,
-    "CAST(dia AS CHAR) LIKE CONCAT(?, '-%') AND estado = ?",
+    "dia LIKE CONCAT(?, '-%') AND estado = ?",
     [String(anio), ESTADO_ANY]
   );
-  const hoyMovimiento = Number(resumen?.hoyMovimiento ?? 0);
+  const hoyMovimiento = await contarPaquetes(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_MOV_HOY]
+  );
   const nombre = mesNombreES(fecha);
 
   return {
