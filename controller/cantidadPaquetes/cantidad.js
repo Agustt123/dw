@@ -4,6 +4,7 @@ const ESTADO_ANY = 999;
 const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
 const CANTIDAD_PAQUETES_TIMEOUT_MS = 600000;
 const CANTIDAD_CACHE_TTL_SECONDS = 60;
+const CANTIDAD_CACHE_VERSION = "v3";
 const cantidadCacheEnVuelo = new Map();
 
 function mesNombreES(fechaYYYYMMDD) {
@@ -56,7 +57,7 @@ function getFechaPartes(fecha) {
 }
 
 function getCantidadCacheKey(fecha) {
-  return `cantidad:global:${fecha}`;
+  return `cantidad:global:${CANTIDAD_CACHE_VERSION}:${fecha}`;
 }
 
 async function getCantidadCache(fecha) {
@@ -174,11 +175,19 @@ async function cantidadGlobalDia(conn, fecha) {
 
 // Devuelve total del mes + total del dia (para la fecha que mandes)
 async function cantidadGlobalMesYDia(conn, fecha) {
-  const { mesPrefix } = getFechaPartes(fecha);
+  const { anio, mesPrefix } = getFechaPartes(fecha);
   const resumen = await obtenerCantidadResumen(conn, fecha);
   const hoy = Number(resumen?.hoy ?? 0);
-  const mes = Number(resumen?.mes ?? 0);
-  const anioCantidad = Number(resumen?.anio ?? 0);
+  const mes = await contarPaquetes(
+    conn,
+    "CAST(dia AS CHAR) LIKE CONCAT(?, '%') AND estado = ?",
+    [mesPrefix, ESTADO_ANY]
+  );
+  const anioCantidad = await contarPaquetes(
+    conn,
+    "CAST(dia AS CHAR) LIKE CONCAT(?, '-%') AND estado = ?",
+    [String(anio), ESTADO_ANY]
+  );
   const hoyMovimiento = Number(resumen?.hoyMovimiento ?? 0);
   const nombre = mesNombreES(fecha);
 
