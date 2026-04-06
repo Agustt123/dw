@@ -1,10 +1,10 @@
 const { executeQuery, redisClient } = require("../../db");
 
 const ESTADO_ANY = 999;
-const ESTADO_MOV_HOY = 998; // paquetesEnMovimientosHoy
+const ESTADO_MOV_HOY = 998;
 const CANTIDAD_PAQUETES_TIMEOUT_MS = 600000;
 const CANTIDAD_CACHE_TTL_SECONDS = 60;
-const CANTIDAD_CACHE_VERSION = "v3";
+const CANTIDAD_CACHE_VERSION = "v4";
 const cantidadCacheEnVuelo = new Map();
 
 function mesNombreES(fechaYYYYMMDD) {
@@ -24,7 +24,7 @@ function mesNombreES(fechaYYYYMMDD) {
   ];
 
   const partes = String(fechaYYYYMMDD).split("-");
-  const mesNum = Number(partes[1]); // "02" -> 2
+  const mesNum = Number(partes[1]);
 
   return MESES[mesNum - 1] || "";
 }
@@ -54,6 +54,10 @@ function getFechaPartes(fecha) {
     inicioAnio,
     inicioAnioSiguiente,
   };
+}
+
+function esTablaNoExiste(error) {
+  return error?.code === "ER_NO_SUCH_TABLE" || error?.errno === 1146;
 }
 
 function getCantidadCacheKey(fecha) {
@@ -86,7 +90,7 @@ async function setCantidadCache(fecha, value) {
   }
 }
 
-async function contarPaquetes(conn, whereSql, params) {
+async function contarPaquetesLegacy(conn, whereSql, params) {
   const sql = `
     SELECT
       COALESCE(
@@ -111,52 +115,131 @@ async function contarPaquetes(conn, whereSql, params) {
   return Number(rows?.[0]?.cantidad ?? 0);
 }
 
-async function cantidadGlobalDia(conn, fecha) {
-  const cantidad = await contarPaquetes(
-    conn,
-    "dia = ? AND estado = ?",
-    [fecha, ESTADO_ANY]
-  );
+async function contarResumen(conn, whereSql, params) {
+  const sql = `
+    SELECT COALESCE(SUM(cantidad), 0) AS cantidad
+    FROM home_app_resumen
+    WHERE didCliente = 0
+      AND didChofer = 0
+      AND ${whereSql}
+  `;
 
-  return { ok: true, cantidad, fecha };
+  const rows = await executeQuery(conn, sql, params, {
+    timeoutMs: CANTIDAD_PAQUETES_TIMEOUT_MS,
+  });
+
+  return Number(rows?.[0]?.cantidad ?? 0);
 }
 
-// Devuelve total del mes + total del dia (para la fecha que mandes)
-async function cantidadGlobalMesYDia(conn, fecha) {
-  const { anio, mesPrefix } = getFechaPartes(fecha);
-  const hoy = await contarPaquetes(
+async function cantidadGlobalDia(conn, fecha) {
+  try {
+    const cantidad = await contarResumen(
+      conn,
+      "dia = ? AND estado = ?",
+      [fecha, ESTADO_ANY]
+    );
+
+    return { ok: true, cantidad, fecha };
+  } catch (error) {
+    if (!esTablaNoExiste(error)) throw error;
+
+    const cantidad = await contarPaquetesLegacy(
+      conn,
+      "dia = ? AND estado = ?",
+      [fecha, ESTADO_ANY]
+    );
+
+    return { ok: true, cantidad, fecha };
+  }
+}
+
+async function cantidadGlobalMesYDiaResumen(conn, fecha) {
+  const { anio, mesPrefix, inicioMes, inicioMesSiguiente, inicioAnio, inicioAnioSiguiente } =
+    getFechaPartes(fecha);
+
+  const hoy = await contarResumen(
     conn,
     "dia = ? AND estado = ?",
     [fecha, ESTADO_ANY]
   );
-  const mes = await contarPaquetes(
+
+  const mes = await contarResumen(
     conn,
-    "dia LIKE CONCAT(?, '%') AND estado = ?",
-    [mesPrefix, ESTADO_ANY]
+    "dia >= ? AND dia < ? AND estado = ?",
+    [inicioMes, inicioMesSiguiente, ESTADO_ANY]
   );
-  const anioCantidad = await contarPaquetes(
+
+  const anioCantidad = await contarResumen(
     conn,
-    "dia LIKE CONCAT(?, '-%') AND estado = ?",
-    [String(anio), ESTADO_ANY]
+    "dia >= ? AND dia < ? AND estado = ?",
+    [inicioAnio, inicioAnioSiguiente, ESTADO_ANY]
   );
-  const hoyMovimiento = await contarPaquetes(
+
+  const hoyMovimiento = await contarResumen(
     conn,
     "dia = ? AND estado = ?",
     [fecha, ESTADO_MOV_HOY]
   );
-  const nombre = mesNombreES(fecha);
 
   return {
     ok: true,
     fecha,
     mes: mesPrefix,
-    nombre,
+    nombre: mesNombreES(fecha),
     hoy,
     mesCantidad: mes,
     hoyMovimiento,
     añoCantidad: anioCantidad,
     anioCantidad,
+    fuente: "home_app_resumen",
+    anio,
   };
+}
+
+async function cantidadGlobalMesYDiaLegacy(conn, fecha) {
+  const { anio, mesPrefix } = getFechaPartes(fecha);
+  const hoy = await contarPaquetesLegacy(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_ANY]
+  );
+  const mes = await contarPaquetesLegacy(
+    conn,
+    "dia LIKE CONCAT(?, '%') AND estado = ?",
+    [mesPrefix, ESTADO_ANY]
+  );
+  const anioCantidad = await contarPaquetesLegacy(
+    conn,
+    "dia LIKE CONCAT(?, '-%') AND estado = ?",
+    [String(anio), ESTADO_ANY]
+  );
+  const hoyMovimiento = await contarPaquetesLegacy(
+    conn,
+    "dia = ? AND estado = ?",
+    [fecha, ESTADO_MOV_HOY]
+  );
+
+  return {
+    ok: true,
+    fecha,
+    mes: mesPrefix,
+    nombre: mesNombreES(fecha),
+    hoy,
+    mesCantidad: mes,
+    hoyMovimiento,
+    añoCantidad: anioCantidad,
+    anioCantidad,
+    fuente: "home_app",
+  };
+}
+
+async function cantidadGlobalMesYDia(conn, fecha) {
+  try {
+    return await cantidadGlobalMesYDiaResumen(conn, fecha);
+  } catch (error) {
+    if (!esTablaNoExiste(error)) throw error;
+    return await cantidadGlobalMesYDiaLegacy(conn, fecha);
+  }
 }
 
 async function cantidadGlobalMesYDiaCached(connFactory, fecha) {

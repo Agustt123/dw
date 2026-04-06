@@ -10,6 +10,7 @@ const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
 const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
+let resumenNoDisponibleLogueado = false;
 
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -108,6 +109,40 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   ], true);
 
   entry.dirty = false;
+}
+
+function esTablaNoExiste(error) {
+  return error?.code === "ER_NO_SUCH_TABLE" || error?.errno === 1146;
+}
+
+async function upsertResumen(conn, owner, cliente, chofer, estado, dia, entry) {
+  const sql = `
+    INSERT INTO home_app_resumen
+      (didOwner, didCliente, didChofer, estado, dia, cantidad)
+    VALUES
+      (?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      cantidad = VALUES(cantidad),
+      autofecha = CURRENT_TIMESTAMP
+  `;
+
+  try {
+    await executeQuery(conn, sql, [
+      owner,
+      cliente,
+      chofer,
+      estado,
+      dia,
+      entry?.historial?.size || 0,
+    ]);
+  } catch (error) {
+    if (!esTablaNoExiste(error)) throw error;
+
+    if (!resumenNoDisponibleLogueado) {
+      resumenNoDisponibleLogueado = true;
+      console.log("home_app_resumen todavia no existe; sigo solo con home_app");
+    }
+  }
 }
 
 // ✅ limpiar estado global por corrida
@@ -453,6 +488,7 @@ async function aplicarAprocesosAHommeApp(conn) {
 
               // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
               await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
+              await upsertResumen(conn, owner, cliente, chofer, estado, dia, entry);
 
               ops += 1;
               if (ops % COMMIT_EVERY === 0) {
