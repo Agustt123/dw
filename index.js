@@ -166,6 +166,7 @@ async function startJobs() {
     }
 
     async function runPendientesFixed() {
+
         if (runningPend) {
             console.log("⏭️ [JOBS] pendientesHoy sigue corriendo, salteo ciclo");
             return;

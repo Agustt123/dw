@@ -11,6 +11,7 @@ const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
 let resumenNoDisponibleLogueado = false;
+let lastCdcId = 0;
 
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -561,12 +562,26 @@ async function pendientesHoy() {
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
       FROM cdc
       WHERE procesado=0
-  
+        AND id > ?
       ORDER BY id ASC
       LIMIT ?
     `;
-    const rows = await executeQuery(conn, selectCDC, [FETCH]);
+    let rows = await executeQuery(conn, selectCDC, [lastCdcId, FETCH]);
+
+    if (!rows.length && lastCdcId !== 0) {
+      console.log(`[PEN2] selectCDC sin filas con cursor lastCdcId=${lastCdcId}, reseteo a 0`);
+      lastCdcId = 0;
+      rows = await executeQuery(conn, selectCDC, [lastCdcId, FETCH]);
+    }
     console.log(`[PEN2] cdc rows=${rows.length}`);
+
+    if (!rows.length) {
+      console.log("[PEN2] sin filas pendientes para procesar");
+      return { ok: true, fetched: 0, processedIds: 0, descartados: 0, lastCdcId };
+    }
+
+    lastCdcId = Number(rows[rows.length - 1]?.id || lastCdcId || 0);
+    console.log(`[PEN2] cursor lastCdcId=${lastCdcId}`);
 
     const rowsClienteNull = rows.filter(r => r.didCliente == null);
     const rowsValidas = rows.filter(r => r.didCliente != null);
