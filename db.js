@@ -215,7 +215,7 @@ async function initDWPool() {
     // ✅ Pool para PENDIENTES (chico)
     dwPoolPend = mysql.createPool({
         ...base,
-        connectionLimit: 1,
+        connectionLimit: 3,
         queueLimit: 200,
     });
 }
