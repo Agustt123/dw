@@ -30,19 +30,22 @@ function readCpuTimes() {
     return { user, nice, sys, idle, irq, total };
 }
 
-let lastCpu = readCpuTimes();
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-function cpuHostPercentSinceLast() {
-    const now = readCpuTimes();
-    const idleDelta = now.idle - lastCpu.idle;
-    const totalDelta = now.total - lastCpu.total;
+async function getCpuHostPercentSample(sampleMs = 250) {
+    const start = readCpuTimes();
+    await sleep(sampleMs);
+    const end = readCpuTimes();
 
-    lastCpu = now;
+    const idleDelta = end.idle - start.idle;
+    const totalDelta = end.total - start.total;
 
     if (totalDelta <= 0) return null;
 
     const usage = 1 - idleDelta / totalDelta;
-    return round1(usage * 100);
+    return round1(Math.max(0, Math.min(100, usage * 100)));
 }
 
 function getDiskUsage(targetPath = process.cwd()) {
@@ -134,6 +137,7 @@ function buildSimple(raw) {
 async function collectSatMetrics(options = {}) {
     const serviceName = options.serviceName || process.env.SERVICE_NAME || "dw";
     const mem = process.memoryUsage();
+    const cpuUsagePct = await getCpuHostPercentSample(options.cpuSampleMs || 250);
 
     const raw = {
         service: serviceName,
@@ -154,7 +158,7 @@ async function collectSatMetrics(options = {}) {
             loadavg_1_5_15: os.loadavg(),
             mem_total_bytes: os.totalmem(),
             mem_free_bytes: os.freemem(),
-            cpu_usage_pct_estimate: cpuHostPercentSinceLast(),
+            cpu_usage_pct_estimate: cpuUsagePct,
             temp_c: getTempC(),
             disk: getDiskUsage(options.diskPath || process.cwd()),
         },
