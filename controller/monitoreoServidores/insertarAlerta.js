@@ -28,7 +28,6 @@ async function insertarAlerta(body = {}) {
 
         const payload = {
             did_notificaciones: toInt(body.did_notificaciones, null),
-            autofecha: body.autofecha || null,
             sev: body.sev || null,
             color: body.color || body.sev || "rojo",
             porcentaje_error: toInt(body.porcentaje_error, null),
@@ -57,11 +56,10 @@ async function insertarAlerta(body = {}) {
                     origen,
                     image_url,
                     token
-                ) VALUES (?, COALESCE(?, NOW()), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 payload.did_notificaciones,
-                payload.autofecha,
                 payload.sev,
                 payload.color,
                 payload.porcentaje_error,
@@ -94,7 +92,7 @@ async function insertarAlerta(body = {}) {
             estado: true,
             message: "Alerta insertada correctamente",
             id: result?.insertId || 0,
-            autofecha: inserted?.autofecha || payload.autofecha || null,
+            autofecha: inserted?.autofecha || null,
             data: payload,
         };
     } catch (error) {

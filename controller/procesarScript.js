@@ -47,10 +47,21 @@ async function corregirFechasHistorialTodasEmpresas() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
-
-        const query = `ALTER TABLE envios_historial ADD deposito INT(5) NULL DEFAULT NULL AFTER longitud;
+        const query = `
+CREATE TABLE IF NOT EXISTS devoluciones (
+  id INT NOT NULL AUTO_INCREMENT,
+  did INT NOT NULL,
+  didEnvios VARCHAR(512) NOT NULL,
+  autofecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  quien INT NOT NULL,
+  obs TEXT NOT NULL,
+  superado INT NOT NULL DEFAULT 0,
+  elim INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_devoluciones_did (did),
+  KEY idx_devoluciones_autofecha (autofecha)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `;
-
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
@@ -829,7 +840,7 @@ async function completarDidClientePorMlVendedorId() {
 
 async function main() {
     console.log("Ejecutando procesarScript...");
-    await resumenCapacidadEnviosHasta2028();
+    await corregirFechasHistorialTodasEmpresas();
     console.log("Fin de procesarScript");
 }
 

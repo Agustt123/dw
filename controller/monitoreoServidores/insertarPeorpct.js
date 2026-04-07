@@ -13,7 +13,6 @@ async function insertarPeorPct(body = {}) {
         db = await getConnectionLocalCdc();
 
         const payload = {
-            autofecha: new Date(),
             cantidad_dia: toInt(body.cantidad_dia, 0),
             peor_pct: toInt(body.peor_pct, 0),
             tiempo_imagen_ms: toInt(body.tiempo_imagen_ms, 0),
@@ -27,10 +26,9 @@ async function insertarPeorPct(body = {}) {
                     cantidad_dia,
                     peor_pct,
                     tiempo_imagen_ms
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (NOW(), ?, ?, ?)
             `,
             [
-                payload.autofecha,
                 payload.cantidad_dia,
                 payload.peor_pct,
                 payload.tiempo_imagen_ms,
