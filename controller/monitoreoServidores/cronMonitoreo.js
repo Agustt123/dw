@@ -7,8 +7,16 @@ const { monitoreo } = require("./monitoreo");
 
 
 function startMonitoreoJob() {
+    let running = false;
+
     // cada 10 minutos: minuto 0,10,20,30,40,50
     cron.schedule("*/5 * * * *", async () => {
+        if (running) {
+            console.log("[MONITOREO JOB] sigue corriendo, salteo ciclo");
+            return;
+        }
+
+        running = true;
         const db = await getConnectionLocalCdc();
         try {
             const r = await monitoreo(db);
@@ -17,6 +25,7 @@ function startMonitoreoJob() {
             console.error("[MONITOREO JOB] error:", err.message);
         } finally {
             if (db?.release) try { db.release(); } catch { }
+            running = false;
         }
     });
 

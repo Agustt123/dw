@@ -170,8 +170,6 @@ async function EnviarcdAsignacion(didOwner) {
     }
 }
 
-EnviarcdcEstado(164);
-
 module.exports = {
     EnviarcdcEstado,
     EnviarcdAsignacion
