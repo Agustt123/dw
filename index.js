@@ -15,6 +15,17 @@ const isJobsChild = process.argv.includes("--jobs-child");
 
 const PORT = 13000;
 
+function isProcessAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 // =========================
 // API (siempre en el proceso principal)
 // =========================
@@ -81,6 +92,41 @@ async function startJobs() {
     const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
+    const parentPidAtStart = process.ppid;
+    let parentWatchdog = null;
+
+    function stopParentWatchdog() {
+        if (!parentWatchdog) return;
+        clearInterval(parentWatchdog);
+        parentWatchdog = null;
+    }
+
+    function exitIfOrphaned(reason) {
+        console.error(`[JOBS] Finalizando child: ${reason}`);
+        stopParentWatchdog();
+        process.exit(1);
+    }
+
+    function startParentWatchdog() {
+        parentWatchdog = setInterval(() => {
+            if (process.ppid === 1) {
+                exitIfOrphaned("PPID=1, quedo huerfano");
+                return;
+            }
+
+            if (!isProcessAlive(parentPidAtStart)) {
+                exitIfOrphaned(`padre ${parentPidAtStart} no responde`);
+            }
+        }, 5000);
+
+        if (typeof parentWatchdog.unref === "function") {
+            parentWatchdog.unref();
+        }
+    }
+
+    process.on("disconnect", () => {
+        exitIfOrphaned("canal IPC desconectado");
+    });
 
     let empresasDB = null;
 
@@ -255,6 +301,7 @@ async function startJobs() {
     }
 
     console.log("✅ [JOBS] Iniciando jobs...");
+    startParentWatchdog();
     await actualizarEmpresas();
 
     iniciarSchedulers();
@@ -300,7 +347,7 @@ async function startJobs() {
 
         function spawnJobsChild() {
             const child = fork(__filename, ["--jobs-child"], {
-                stdio: "inherit", // logs del child salen en pm2 logs
+                stdio: ["inherit", "inherit", "inherit", "ipc"],
                 env: process.env,
             });
 
