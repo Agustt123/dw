@@ -193,6 +193,7 @@ async function getPrevFromHomeApp(conn, owner, envio) {
 }
 
 async function preloadPrevFromHomeApp(conn, rows) {
+  const startedAt = Date.now();
   const prevMap = new Map();
   const enviosPorOwner = new Map();
 
@@ -207,6 +208,7 @@ async function preloadPrevFromHomeApp(conn, rows) {
 
   for (const [owner, enviosSet] of enviosPorOwner.entries()) {
     if (!enviosSet.size) continue;
+    console.log(`[PEN2] preload previos owner=${owner} envios=${enviosSet.size}`);
 
     const qPrevBatch = `
       SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
@@ -236,12 +238,16 @@ async function preloadPrevFromHomeApp(conn, rows) {
     }
   }
 
+  console.log(`[PEN2] preloadPrevFromHomeApp listo owners=${enviosPorOwner.size} claves=${prevMap.size} elapsedMs=${Date.now() - startedAt}`);
+
   return prevMap;
 }
 
 
 // ----------------- Builder para disparador = 'estado' -----------------
 async function buildAprocesosEstado(rows, connection) {
+  const startedAt = Date.now();
+  console.log(`[PEN2] buildAprocesosEstado inicio rows=${rows.length}`);
   const prevMap = await preloadPrevFromHomeApp(connection, rows);
 
   for (const row of rows) {
@@ -348,11 +354,14 @@ async function buildAprocesosEstado(rows, connection) {
 
     idsProcesados.push(row.id);
   }
+  console.log(`[PEN2] buildAprocesosEstado fin rows=${rows.length} prevMap=${prevMap.size} elapsedMs=${Date.now() - startedAt}`);
   return Aprocesos;
 }
 
 // ----------------- Builder para disparador = 'asignaciones' -----------------
 async function buildAprocesosAsignaciones(conn, rows) {
+  const startedAt = Date.now();
+  console.log(`[PEN2] buildAprocesosAsignaciones inicio rows=${rows.length}`);
   for (const row of rows) {
     const OW = row.didOwner;
     const CLI = row.didCliente ?? 0;
@@ -441,11 +450,13 @@ async function buildAprocesosAsignaciones(conn, rows) {
 
     idsProcesados.push(row.id);
   }
+  console.log(`[PEN2] buildAprocesosAsignaciones fin rows=${rows.length} elapsedMs=${Date.now() - startedAt}`);
   return Aprocesos;
 }
 
 // ----------------- Aplicar batch (cache + flush) -----------------
 async function aplicarAprocesosAHommeApp(conn) {
+  const startedAt = Date.now();
   const COMMIT_EVERY = 300;
   let ops = 0;
 
@@ -459,6 +470,7 @@ async function aplicarAprocesosAHommeApp(conn) {
     for (const ownerKey in Aprocesos) {
       const owner = Number(ownerKey);
       const porCliente = Aprocesos[ownerKey];
+      console.log(`[PEN2] flush owner=${owner} clientes=${Object.keys(porCliente).length}`);
 
       for (const clienteKey in porCliente) {
         const cliente = Number(clienteKey);
@@ -492,6 +504,7 @@ async function aplicarAprocesosAHommeApp(conn) {
 
               ops += 1;
               if (ops % COMMIT_EVERY === 0) {
+                console.log(`[PEN2] commit parcial ops=${ops}`);
                 await commit();
                 await begin();
               }
@@ -502,6 +515,7 @@ async function aplicarAprocesosAHommeApp(conn) {
     }
 
     await commit();
+    console.log(`[PEN2] aplicarAprocesosAHommeApp fin ops=${ops} elapsedMs=${Date.now() - startedAt}`);
   } catch (e) {
     try { await rollback(); } catch (_) { }
     throw e;
@@ -540,6 +554,7 @@ async function pendientesHoy() {
   let fatalErr = null;
 
   try {
+    console.log("[PEN2] pendientesHoy inicio");
     const FETCH = 3000;
 
     const selectCDC = `
@@ -551,9 +566,11 @@ async function pendientesHoy() {
       LIMIT ?
     `;
     const rows = await executeQuery(conn, selectCDC, [FETCH]);
+    console.log(`[PEN2] cdc rows=${rows.length}`);
 
     const rowsClienteNull = rows.filter(r => r.didCliente == null);
     const rowsValidas = rows.filter(r => r.didCliente != null);
+    console.log(`[PEN2] cdc validas=${rowsValidas.length} nullDidCliente=${rowsClienteNull.length}`);
 
     if (rowsClienteNull.length) {
       const idsNull = rowsClienteNull.map(r => r.id);
@@ -568,16 +585,16 @@ async function pendientesHoy() {
     const rowsEstado = rowsValidas.filter(r => r.disparador === "estado");
     const rowsAsignaciones = rowsValidas.filter(r => r.disparador === "asignaciones");
 
-    console.log("llegamos 1");
+    console.log(`[PEN2] rowsEstado=${rowsEstado.length} rowsAsignaciones=${rowsAsignaciones.length}`);
 
     await buildAprocesosEstado(rowsEstado, conn);
-    console.log("llegamos 2");
+    console.log("[PEN2] buildAprocesosEstado ok");
 
     await buildAprocesosAsignaciones(conn, rowsAsignaciones);
-    console.log("llegamos 3");
+    console.log("[PEN2] buildAprocesosAsignaciones ok");
 
     await aplicarAprocesosAHommeApp(conn);
-    console.log("llegamos 4");
+    console.log("[PEN2] aplicarAprocesosAHommeApp ok");
 
     return { ok: true, fetched: rows.length, processedIds: idsProcesados.length, descartados: rowsClienteNull.length };
   } catch (err) {

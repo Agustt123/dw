@@ -60,10 +60,14 @@ async function main() {
     RUN_TIMEOUT_MS,
   });
 
+  let tick = 0;
   while (!stopRequested) {
+    tick += 1;
+    console.log(`🧭 [PEN] tick=${tick} stopRequested=${stopRequested} running=${running}`);
     await runPendientesTick();
 
     if (stopRequested) break;
+    console.log(`😴 [PEN] sleep ${LOOP_PAUSE_MS} ms antes del proximo tick`);
     await sleep(LOOP_PAUSE_MS);
   }
 
