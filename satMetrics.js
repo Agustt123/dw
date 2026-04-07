@@ -30,17 +30,15 @@ function readCpuTimes() {
     return { user, nice, sys, idle, irq, total };
 }
 
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
+let lastCpu = readCpuTimes();
 
-async function getCpuHostPercentSample(sampleMs = 250) {
-    const start = readCpuTimes();
-    await sleep(sampleMs);
-    const end = readCpuTimes();
+function cpuHostPercentSinceLast() {
+    const now = readCpuTimes();
 
-    const idleDelta = end.idle - start.idle;
-    const totalDelta = end.total - start.total;
+    const idleDelta = now.idle - lastCpu.idle;
+    const totalDelta = now.total - lastCpu.total;
+
+    lastCpu = now;
 
     if (totalDelta <= 0) return null;
 
@@ -137,7 +135,7 @@ function buildSimple(raw) {
 async function collectSatMetrics(options = {}) {
     const serviceName = options.serviceName || process.env.SERVICE_NAME || "dw";
     const mem = process.memoryUsage();
-    const cpuUsagePct = await getCpuHostPercentSample(options.cpuSampleMs || 250);
+    const cpuUsagePct = cpuHostPercentSinceLast();
 
     const raw = {
         service: serviceName,
