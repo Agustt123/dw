@@ -35,6 +35,7 @@ function maxOrNull(values) {
 async function monitoreoRecursos(
     db,
     services = [
+        { key: "dw", url: "http://127.0.0.1:13000/_sat/metrics" },
         { key: "asignaciones", url: "http://asignaciones.lightdata.app/_sat/metrics" },
         { key: "backgps", url: "http://backgps2.lightdata.com.ar/_sat/metrics" },
         { key: "colecta", url: "http://colecta.lightdata.app/_sat/metrics" },

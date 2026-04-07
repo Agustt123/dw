@@ -9,6 +9,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const { fork } = require("child_process");
 const { startMonitoreoBd } = require("./controller/monitoreoServidores/cronMonitoreoBd.js");
+const { collectSatMetrics } = require("./satMetrics.js");
 
 const isJobsChild = process.argv.includes("--jobs-child");
 
@@ -35,6 +36,19 @@ function startApi() {
     app.use("/informe-colecta", informeColecta);
     app.get("/ping", (req, res) => res.status(200).json({ estado: true, mensaje: "OK" }));
     app.get("/healthz", (req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
+    app.get("/_sat/metrics", async (req, res) => {
+        try {
+            const metrics = await collectSatMetrics({ serviceName: "dw" });
+            return res.status(200).json(metrics);
+        } catch (error) {
+            console.error("❌ [API] Error en /_sat/metrics:", error?.message || error);
+            return res.status(500).json({
+                status: "error",
+                service: "dw",
+                error: error?.message || "No se pudieron obtener las métricas",
+            });
+        }
+    });
 
     app.use("/cantidad", cantidad);
     app.use("/monitoreo", monitorear);
