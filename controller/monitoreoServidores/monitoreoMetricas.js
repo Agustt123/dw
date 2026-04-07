@@ -32,6 +32,10 @@ function maxOrNull(values) {
     return nums.length ? Math.max(...nums) : null;
 }
 
+function shouldIncludeInConjunto(result) {
+    return result?.servidor !== "dw";
+}
+
 async function monitoreoRecursos(
     db,
     services = [
@@ -172,18 +176,20 @@ async function monitoreoRecursos(
     }
 
     // 3) Agregamos un DID MÁS para el "microservicio conjunto" con máximos
-    const latenciaMax = maxOrNull(results.map((r) => r.latenciaMs));
-    const usoRamMax = maxOrNull(results.map((r) => r.usoRam));
-    const usoCpuMax = maxOrNull(results.map((r) => r.usoCpu));
-    const usoDiscoMax = maxOrNull(results.map((r) => r.usoDisco));
-    const tempMax = maxOrNull(results.map((r) => r.temperaturaCpu));
+    const resultsConjunto = results.filter(shouldIncludeInConjunto);
 
-    const carga1mMax = maxOrNull(results.map((r) => r.carga1m));
-    const ramProcesoMax = maxOrNull(results.map((r) => r.ramProcesoMb));
-    const cpuProcesoMax = maxOrNull(results.map((r) => r.cpuProceso));
+    const latenciaMax = maxOrNull(resultsConjunto.map((r) => r.latenciaMs));
+    const usoRamMax = maxOrNull(resultsConjunto.map((r) => r.usoRam));
+    const usoCpuMax = maxOrNull(resultsConjunto.map((r) => r.usoCpu));
+    const usoDiscoMax = maxOrNull(resultsConjunto.map((r) => r.usoDisco));
+    const tempMax = maxOrNull(resultsConjunto.map((r) => r.temperaturaCpu));
+
+    const carga1mMax = maxOrNull(resultsConjunto.map((r) => r.carga1m));
+    const ramProcesoMax = maxOrNull(resultsConjunto.map((r) => r.ramProcesoMb));
+    const cpuProcesoMax = maxOrNull(resultsConjunto.map((r) => r.cpuProceso));
 
     // (opcional) ok del conjunto: 1 si al menos uno estuvo ok, sino 0
-    const okConjunto = results.some((r) => r.ok === 1) ? 1 : 0;
+    const okConjunto = resultsConjunto.some((r) => r.ok === 1) ? 1 : 0;
 
     const valuesConjunto = [
         did,
