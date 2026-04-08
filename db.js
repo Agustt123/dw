@@ -76,6 +76,7 @@ async function getConnection(idempresa) {
         } catch (_) { }
 
         const msg = error?.message || String(error);
+        await tryFlushHosts(error);
         //  console.error("❌ Error al obtener conexión:", msg);
 
         throw {
@@ -131,6 +132,7 @@ async function getConnectionIndividual(idempresa) {
 
         return mysql.createConnection(config);
     } catch (error) {
+        await tryFlushHosts(error);
         console.error(`Error al obtener la conexión:`, error.message);
 
         // Lanza un error con una respuesta estándar
@@ -154,6 +156,7 @@ async function getConnectionSistema() {
         try {
             if (connection?.release) connection.release();
         } catch (_) { }
+        await tryFlushHosts(error);
 
         throw {
             status: 500,
@@ -174,6 +177,9 @@ const dwConfigBase = {
 };
 
 const dwDbName = "data";
+const FLUSH_HOSTS_COOLDOWN_MS = 15000;
+let flushHostsEnCurso = null;
+let ultimoFlushHostsMs = 0;
 
 let dwInitPromise = null;
 
@@ -225,11 +231,79 @@ async function ensurePools() {
     await dwInitPromise;
 }
 
+function isHostBlockedError(error) {
+    const code = String(error?.code || "");
+    const msg = String(error?.message || "").toLowerCase();
+
+    return (
+        code === "ER_HOST_IS_BLOCKED" ||
+        msg.includes("host") && msg.includes("blocked") && msg.includes("connection errors") ||
+        msg.includes("flush-hosts") ||
+        msg.includes("flush hosts")
+    );
+}
+
+async function ejecutarFlushHosts(config) {
+    let conn;
+    try {
+        conn = await mysql.createConnection({
+            host: config.host,
+            port: config.port,
+            user: config.user,
+            password: config.password,
+            multipleStatements: true,
+        });
+        await conn.query("FLUSH HOSTS");
+        console.log(`✅ FLUSH HOSTS ejecutado en ${config.host}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ No se pudo ejecutar FLUSH HOSTS en ${config.host}:`, error?.message || error);
+        return false;
+    } finally {
+        try { if (conn) await conn.end(); } catch { }
+    }
+}
+
+async function tryFlushHosts(error) {
+    if (!isHostBlockedError(error)) return false;
+
+    const ahora = Date.now();
+    if (flushHostsEnCurso) return flushHostsEnCurso;
+    if (ahora - ultimoFlushHostsMs < FLUSH_HOSTS_COOLDOWN_MS) return true;
+
+    flushHostsEnCurso = (async () => {
+        ultimoFlushHostsMs = Date.now();
+
+        const targets = [
+            {
+                host: dwConfigBase.host,
+                port: dwConfigBase.port,
+                user: dwConfigBase.user,
+                password: dwConfigBase.password,
+            },
+        ];
+
+        let ok = false;
+        for (const target of targets) {
+            // seguimos aunque uno falle
+            ok = (await ejecutarFlushHosts(target)) || ok;
+        }
+        return ok;
+    })();
+
+    try {
+        return await flushHostsEnCurso;
+    } finally {
+        flushHostsEnCurso = null;
+    }
+}
+
 async function getConnectionLocalEnvios() {
     try {
         await ensurePools();
         return await dwPoolEnvios.getConnection();
     } catch (error) {
+        await tryFlushHosts(error);
         // console.error("❌ Error al obtener conexión local (ENVIOS):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
@@ -240,6 +314,7 @@ async function getConnectionLocalCdc() {
         await ensurePools();
         return await dwPoolCdc.getConnection();
     } catch (error) {
+        await tryFlushHosts(error);
         //console.error("❌ Error al obtener conexión local (CDC):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
@@ -250,6 +325,7 @@ async function getConnectionLocalPendientes() {
         await ensurePools();
         return await dwPoolPend.getConnection();
     } catch (error) {
+        await tryFlushHosts(error);
         // console.error("❌ Error al obtener conexión local (PENDIENTES):", error.message);
         throw { status: 500, response: { estado: false, error: -1, message: error.message } };
     }
@@ -315,11 +391,38 @@ async function executeQuery(connection, query, values = [], opts = {}) {
     } catch (error) {
         if (log) logRed(`❌ Error en query: ${error.message}`);
 
+        if (isHostBlockedError(error)) {
+            const flushed = await tryFlushHosts(error);
+
+            if (flushed) {
+                try {
+                    const [retryResults] = await connection.query({
+                        sql: query,
+                        values,
+                        timeout: timeoutMs,
+                    });
+
+                    if (log) logYellow(`✅ Resultados luego de FLUSH HOSTS: ${JSON.stringify(retryResults)}`);
+                    return retryResults;
+                } catch (retryError) {
+                    if (log) logRed(`❌ Error reintentando query despues de FLUSH HOSTS: ${retryError.message}`);
+                    retryError.__shouldDestroyConnection =
+                        retryError.code === "PROTOCOL_CONNECTION_LOST" ||
+                        retryError.code === "ECONNRESET" ||
+                        retryError.code === "ETIMEDOUT" ||
+                        isHostBlockedError(retryError) ||
+                        String(retryError.message || "").toLowerCase().includes("timeout");
+                    throw retryError;
+                }
+            }
+        }
+
         // marcadores típicos de problemas donde conviene destruir conexión
         error.__shouldDestroyConnection =
             error.code === "PROTOCOL_CONNECTION_LOST" ||
             error.code === "ECONNRESET" ||
             error.code === "ETIMEDOUT" ||
+            isHostBlockedError(error) ||
             String(error.message || "").toLowerCase().includes("timeout");
 
         throw error;
