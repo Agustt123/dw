@@ -51,28 +51,28 @@ async function obtenerEmpresas() {
     }
 }
 
-async function procesarCdcParaEmpresa(didOwner) {
+async function procesarCdcParaEmpresa() {
     try {
         const startAt = Date.now();
 
         // Ejecutar ambos en paralelo si es posible
         await Promise.all([
             withTimeout(
-                EnviarcdAsignacion(didOwner),
+                EnviarcdAsignacion(),
                 CDC_TIMEOUT_MS,
-                `[CDC] Asignacion empresa ${didOwner}`
+                `[CDC] Asignacion`
             ),
             withTimeout(
-                EnviarcdcEstado(didOwner),
+                EnviarcdcEstado(),
                 CDC_TIMEOUT_MS,
-                `[CDC] Estado empresa ${didOwner}`
+                `[CDC] Estado`
             )
         ]);
 
         const elapsed = Date.now() - startAt;
-        console.log(`✅ [CDC] Empresa ${didOwner} procesada (${elapsed}ms)`);
+        console.log(`✅ [CDC] Procesamiento global completado (${elapsed}ms)`);
     } catch (err) {
-        console.error(`❌ [CDC] Error empresa ${didOwner}:`, err?.message || err);
+        console.error(`❌ [CDC] Error en procesamiento global:`, err?.message || err);
     }
 }
 
@@ -88,43 +88,11 @@ async function runCdcTick() {
     try {
         console.log("🔁 [CDC] Iniciando procesamiento de CDC...");
 
-        const didOwners = await obtenerEmpresas();
-
-        if (!didOwners.length) {
-            console.warn("⚠️ [CDC] No hay empresas para procesar");
-            return;
-        }
-
-        const empresasValidas = didOwners.filter(d => !EMPRESAS_BLOQUEADAS.has(d));
-        console.log(`📋 [CDC] Procesando ${empresasValidas.length} empresas (lotes de 2 en paralelo)...`);
-
-        let succeeded = 0;
-        let failed = 0;
-
-        // Procesar en lotes de 3 empresas simultáneamente (ahora que hay más conexiones)
-        const BATCH_SIZE = 3;
-        for (let i = 0; i < empresasValidas.length; i += BATCH_SIZE) {
-            const batch = empresasValidas.slice(i, i + BATCH_SIZE);
-            console.log(`🔄 [CDC] Procesando lote ${Math.floor(i / BATCH_SIZE) + 1}: empresas ${batch.join(', ')}`);
-
-            const results = await Promise.allSettled(
-                batch.map(didOwner => procesarCdcParaEmpresa(didOwner))
-            );
-
-            results.forEach((result, idx) => {
-                const didOwner = batch[idx];
-                if (result.status === "fulfilled") {
-                    succeeded += 1;
-                } else {
-                    failed += 1;
-                    console.error(`❌ [CDC] Error empresa ${didOwner}:`, result.reason?.message || result.reason);
-                }
-            });
-        }
+        await procesarCdcParaEmpresa();
 
         const elapsed = Date.now() - startedAt;
 
-        console.log(`✅ [CDC] Tick completado: éxito=${succeeded}, error=${failed}, tiempo=${(elapsed / 1000).toFixed(1)}s`);
+        console.log(`✅ [CDC] Tick completado: tiempo=${(elapsed / 1000).toFixed(1)}s`);
     } catch (err) {
         const elapsed = Date.now() - startedAt;
         console.error("❌ [CDC] Error en tick:", {

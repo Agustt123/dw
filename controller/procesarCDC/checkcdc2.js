@@ -14,7 +14,7 @@ async function closeConn(conn) {
 // ==============================
 // ESTADOS → CDC
 // ==============================
-async function EnviarcdcEstado(didOwner) {
+async function EnviarcdcEstado() {
     let connection;
     try {
         connection = await getConnectionLocalCdc();
@@ -39,11 +39,10 @@ async function EnviarcdcEstado(didOwner) {
         ON v_any.didOwner = e.didOwner
        AND v_any.didEnvio = e.didEnvio
       WHERE e.cdc = 0
-        AND e.didOwner = ?
-      LIMIT 10000
     `;
 
-        const rows = await executeQuery(connection, selectQuery, [didOwner]);
+        const rows = await executeQuery(connection, selectQuery, []);
+        console.log(`📊 [CDC] ${rows.length} registros pendientes en estado`);
         if (rows.length === 0) return;
 
         const insertQuery = `
@@ -61,6 +60,7 @@ VALUES
         const ejecutadores = ["estado"];
         const disparador = "estado";
 
+        let processed = 0;
         for (const row of rows) {
             const { didOwner, didEnvio, estado, autofecha, quien, didCadete, didCliente, fecha_inicio } = row;
 
@@ -93,9 +93,11 @@ VALUES
                 console.warn(`⚠️ [CDC] No se pudo marcar cdc=1 para estado didOwner=${didOwner}, didEnvio=${didEnvio}`);
                 continue;
             }
+            processed++;
         }
+        console.log(`✅ [CDC] Procesados ${processed} registros de estado`);
     } catch (error) {
-        console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}:`, error);
+        console.error(`❌ Error en EnviarcdcEstado:`, error);
     } finally {
         await closeConn(connection);
     }
@@ -104,7 +106,7 @@ VALUES
 // ==============================
 // ASIGNACIONES → CDC
 // ==============================
-async function EnviarcdAsignacion(didOwner) {
+async function EnviarcdAsignacion() {
     let connection;
     try {
         connection = await getConnectionLocalCdc();
@@ -128,11 +130,10 @@ async function EnviarcdAsignacion(didOwner) {
         ON v_any.didOwner = a.didOwner
        AND v_any.didEnvio = a.didEnvio
       WHERE a.cdc = 0
-        AND a.didOwner = ?
-      LIMIT 10000
     `;
 
-        const rows = await executeQuery(connection, selectQuery, [didOwner]);
+        const rows = await executeQuery(connection, selectQuery, []);
+        console.log(`📊 [CDC] ${rows.length} registros pendientes en asignaciones`);
         if (rows.length === 0) return;
 
         const insertQuery = `
@@ -150,6 +151,7 @@ async function EnviarcdAsignacion(didOwner) {
         const ejecutadores = ["estado"];
         const disparador = "asignaciones";
 
+        let processed = 0;
         for (const row of rows) {
             const { didOwner, didEnvio, operador, autofecha, estado, didCliente, fecha_inicio } = row;
             const valorEstado = (estado !== undefined) ? estado : null;
@@ -176,12 +178,14 @@ async function EnviarcdAsignacion(didOwner) {
 
             try {
                 await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+                processed++;
             } catch (updateErr) {
                 console.error(`❌ [CDC] Error marcando asignacion cdc=1 didOwner=${didOwner}, didEnvio=${didEnvio}:`, updateErr.message);
             }
         }
+        console.log(`✅ [CDC] Procesados ${processed} registros de asignaciones`);
     } catch (error) {
-        console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}:`, error);
+        console.error(`❌ Error en EnviarcdAsignacion:`, error);
     } finally {
         await closeConn(connection);
     }
