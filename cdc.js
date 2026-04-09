@@ -95,24 +95,31 @@ async function runCdcTick() {
             return;
         }
 
-        console.log(`📋 [CDC] Procesando ${didOwners.length} empresas (secuencial)...`);
+        const empresasValidas = didOwners.filter(d => !EMPRESAS_BLOQUEADAS.has(d));
+        console.log(`📋 [CDC] Procesando ${empresasValidas.length} empresas (lotes de 2 en paralelo)...`);
 
         let succeeded = 0;
         let failed = 0;
 
-        // Procesar secuencialmente para no saturar el pool de conexiones
-        for (const didOwner of didOwners) {
-            if (EMPRESAS_BLOQUEADAS.has(didOwner)) {
-                continue;
-            }
+        // Procesar en lotes de 2 empresas simultáneamente (para no saturar pool de 2 conexiones)
+        const BATCH_SIZE = 2;
+        for (let i = 0; i < empresasValidas.length; i += BATCH_SIZE) {
+            const batch = empresasValidas.slice(i, i + BATCH_SIZE);
+            console.log(`🔄 [CDC] Procesando lote ${Math.floor(i / BATCH_SIZE) + 1}: empresas ${batch.join(', ')}`);
 
-            try {
-                await procesarCdcParaEmpresa(didOwner);
-                succeeded += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(`❌ [CDC] Error empresa ${didOwner}:`, err?.message || err);
-            }
+            const results = await Promise.allSettled(
+                batch.map(didOwner => procesarCdcParaEmpresa(didOwner))
+            );
+
+            results.forEach((result, idx) => {
+                const didOwner = batch[idx];
+                if (result.status === "fulfilled") {
+                    succeeded += 1;
+                } else {
+                    failed += 1;
+                    console.error(`❌ [CDC] Error empresa ${didOwner}:`, result.reason?.message || result.reason);
+                }
+            });
         }
 
         const elapsed = Date.now() - startedAt;
