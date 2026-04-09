@@ -5,7 +5,7 @@
 const { redisClient } = require("./db.js");
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 
-const LOOP_PAUSE_MS = Number(process.env.CDC_LOOP_PAUSE_MS || 60 * 1000); // 60 segundos default
+const LOOP_PAUSE_MS = Number(process.env.CDC_LOOP_PAUSE_MS || 10 * 1000); // 10 segundos default
 const CDC_TIMEOUT_MS = Number(process.env.CDC_TIMEOUT_MS || 500 * 1000); // 500 segundos default
 
 const EMPRESAS_BLOQUEADAS = new Set([275, 276, 345]);
