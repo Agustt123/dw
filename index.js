@@ -77,7 +77,6 @@ function withTimeout(promise, ms, label) {
 async function startJobs() {
     const { redisClient, getFromRedis, closeDWPool } = require("./db.js");
     const { sincronizarEnviosUnaVez } = require("./controller/controllerEnvio.js");
-    const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
     const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
@@ -145,70 +144,11 @@ async function startJobs() {
     }
 
     // =========================
-    // CDC
-    // =========================
-    async function correrCdcUnaVez() {
-        await actualizarEmpresas();
-        const didOwners = obtenerDidOwners();
-
-        if (!didOwners.length) {
-            console.log("⚠️ [JOBS] No se encontraron empresas para CDC.");
-            return;
-        }
-
-        console.log(`🔁 [JOBS] CDC para ${didOwners.length} empresas...`);
-
-        for (const didOwner of didOwners) {
-            try {
-                await withTimeout(EnviarcdAsignacion(didOwner), 500000, `CDC asignacion ${didOwner}`);
-                await withTimeout(EnviarcdcEstado(didOwner), 500000, `CDC estado ${didOwner}`);
-            } catch (e) {
-                console.error(`❌ [JOBS] Error CDC empresa ${didOwner}:`, e?.message || e);
-            }
-        }
-    }
-
-    // =========================
     // Locks
     // =========================
     let runningEnvios = false;
 
-    let runningCdc = false;
-    let cdcPending = false;
-
     let runningPend = false;
-
-    async function runCdcSafely() {
-        if (runningCdc) {
-            cdcPending = true;
-            return;
-        }
-
-        if (runningEnvios) {
-            cdcPending = true;
-            return;
-        }
-
-        runningCdc = true;
-
-        try {
-            do {
-                cdcPending = false;
-                console.log("🔁 [JOBS] CDC: iniciando...");
-                await correrCdcUnaVez();
-                console.log("✅ [JOBS] CDC: completado");
-
-                if (runningEnvios) {
-                    cdcPending = true;
-                    break;
-                }
-            } while (cdcPending);
-        } catch (e) {
-            console.error("❌ [JOBS] Error en CDC:", e?.message || e);
-        } finally {
-            runningCdc = false;
-        }
-    }
 
     async function runPendientesFixed() {
 
@@ -271,17 +211,12 @@ async function startJobs() {
             });
 
         runningEnvios = false;
-
-        if (cdcPending) {
-            runCdcSafely().catch(() => { });
-        }
     }
 
     function iniciarSchedulers() {
-        // ENVÍOS + CDC
+        // ENVÍOS (CDC corre en proceso separado cdc.js)
         setInterval(() => {
             runEnviosTick().catch(() => { });
-            runCdcSafely().catch(() => { });
         }, 60 * 1000);
     }
 
