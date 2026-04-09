@@ -40,7 +40,7 @@ async function EnviarcdcEstado(didOwner) {
        AND v_any.didEnvio = e.didEnvio
       WHERE e.cdc = 0
         AND e.didOwner = ?
-      LIMIT 100000
+      LIMIT 10000
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
@@ -69,22 +69,30 @@ VALUES
             // - o insertar igual con null (y que el consumer lo resuelva)
             // acá lo dejo insertando (pero podés cambiarlo)
             for (const ejecutar of ejecutadores) {
-                await executeQuery(connection, insertQuery, [
-                    didOwner,
-                    didEnvio,
-                    ejecutar,
-                    estado,
-                    disparador,
-                    didCliente ?? null,
-                    autofecha,
-                    fecha_inicio ?? null,
-                    didCadete || 0,
-                    quien || 0,
-                ]);
+                try {
+                    await executeQuery(connection, insertQuery, [
+                        didOwner,
+                        didEnvio,
+                        ejecutar,
+                        estado,
+                        disparador,
+                        didCliente ?? null,
+                        autofecha,
+                        fecha_inicio ?? null,
+                        didCadete || 0,
+                        quien || 0,
+                    ]);
+                } catch (insertErr) {
+                    console.error(`❌ [CDC] Error insertando estado en cdc didOwner=${didOwner}, didEnvio=${didEnvio}:`, insertErr.message);
+                    continue; // No marcar cdc=1 si insert falló
+                }
             }
 
             const result = await executeQuery(connection, updateQuery, [didOwner, didEnvio], true);
-            if (result.affectedRows === 0) continue;
+            if (result.affectedRows === 0) {
+                console.warn(`⚠️ [CDC] No se pudo marcar cdc=1 para estado didOwner=${didOwner}, didEnvio=${didEnvio}`);
+                continue;
+            }
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdcEstado para didOwner ${didOwner}:`, error);
@@ -121,7 +129,7 @@ async function EnviarcdAsignacion(didOwner) {
        AND v_any.didEnvio = a.didEnvio
       WHERE a.cdc = 0
         AND a.didOwner = ?
-      LIMIT 100000
+      LIMIT 10000
     `;
 
         const rows = await executeQuery(connection, selectQuery, [didOwner]);
@@ -147,21 +155,30 @@ async function EnviarcdAsignacion(didOwner) {
             const valorEstado = (estado !== undefined) ? estado : null;
 
             for (const ejecutar of ejecutadores) {
-                // ✅ ACÁ estaba el bug: ahora SIEMPRE manda didCliente
-                await executeQuery(connection, insertQuery, [
-                    didOwner,
-                    didEnvio,
-                    ejecutar,
-                    operador || 0,
-                    autofecha,
-                    disparador,
-                    didCliente ?? null,
-                    valorEstado,
-                    fecha_inicio ?? null,
-                ]);
+                try {
+                    // ✅ ACÁ estaba el bug: ahora SIEMPRE manda didCliente
+                    await executeQuery(connection, insertQuery, [
+                        didOwner,
+                        didEnvio,
+                        ejecutar,
+                        operador || 0,
+                        autofecha,
+                        disparador,
+                        didCliente ?? null,
+                        valorEstado,
+                        fecha_inicio ?? null,
+                    ]);
+                } catch (insertErr) {
+                    console.error(`❌ [CDC] Error insertando asignacion en cdc didOwner=${didOwner}, didEnvio=${didEnvio}:`, insertErr.message);
+                    continue; // No marcar cdc=1 si insert falló
+                }
             }
 
-            await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            try {
+                await executeQuery(connection, updateQuery, [didOwner, didEnvio]);
+            } catch (updateErr) {
+                console.error(`❌ [CDC] Error marcando asignacion cdc=1 didOwner=${didOwner}, didEnvio=${didEnvio}:`, updateErr.message);
+            }
         }
     } catch (error) {
         console.error(`❌ Error en EnviarcdAsignacion para didOwner ${didOwner}:`, error);
