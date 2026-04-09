@@ -101,8 +101,8 @@ async function runCdcTick() {
         let succeeded = 0;
         let failed = 0;
 
-        // Procesar en lotes de 2 empresas simultáneamente (para no saturar pool de 2 conexiones)
-        const BATCH_SIZE = 2;
+        // Procesar en lotes de 3 empresas simultáneamente (ahora que hay más conexiones)
+        const BATCH_SIZE = 3;
         for (let i = 0; i < empresasValidas.length; i += BATCH_SIZE) {
             const batch = empresasValidas.slice(i, i + BATCH_SIZE);
             console.log(`🔄 [CDC] Procesando lote ${Math.floor(i / BATCH_SIZE) + 1}: empresas ${batch.join(', ')}`);

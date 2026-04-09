@@ -27,7 +27,7 @@ const superPool = mysql.createPool({
     user: "lightdat_susanita", // ✅ Reemplazá esto con tu usuario real
     password: "susanitateniaunraton", // ✅ Reemplazá esto con tu password real
     waitForConnections: true,
-    connectionLimit: 2,
+    connectionLimit: 5,
     queueLimit: 0,
     multipleStatements: true, // Por si necesitás ejecutar varios queries separados por ";"
 });
@@ -37,7 +37,7 @@ const sistemaPool = mysql.createPool({
     password: "susanitateniaunraton",
     database: "lightdat_sistema",
     waitForConnections: true,
-    connectionLimit: 2,
+    connectionLimit: 5,
     queueLimit: 0,
     multipleStatements: true,
 });
