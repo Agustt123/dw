@@ -2,7 +2,7 @@
 // Proceso independiente para procesar CDC (Change Data Capture)
 // Corre cada minuto independientemente de envios
 
-const { getFromRedis } = require("./db.js");
+const { redisClient } = require("./db.js");
 const { EnviarcdAsignacion, EnviarcdcEstado } = require("./controller/procesarCDC/checkcdc2.js");
 
 const LOOP_PAUSE_MS = Number(process.env.CDC_LOOP_PAUSE_MS || 60 * 1000); // 60 segundos default
@@ -33,13 +33,13 @@ function withTimeout(promise, timeoutMs, label) {
 
 async function obtenerEmpresas() {
     try {
-        const empresasStr = await getFromRedis("empresasData");
+        const empresasStr = await redisClient.get("empresasData");
         if (!empresasStr) {
             console.warn("⚠️ [CDC] No hay 'empresasData' en Redis");
             return [];
         }
 
-        const empresasData = JSON.parse(empresasStr);
+        const empresasData = typeof empresasStr === "string" ? JSON.parse(empresasStr) : empresasStr;
         const didOwners = Object.keys(empresasData)
             .map(k => parseInt(k, 10))
             .filter(n => !isNaN(n));
