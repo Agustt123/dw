@@ -95,20 +95,29 @@ async function runCdcTick() {
             return;
         }
 
-        console.log(`📋 [CDC] Procesando ${didOwners.length} empresas...`);
+        console.log(`📋 [CDC] Procesando ${didOwners.length} empresas (secuencial)...`);
 
-        // Procesar todas en paralelo (o limitado si es necesario)
-        const results = await Promise.allSettled(
-            didOwners
-                .filter(d => !EMPRESAS_BLOQUEADAS.has(d))
-                .map(didOwner => procesarCdcParaEmpresa(didOwner))
-        );
+        let succeeded = 0;
+        let failed = 0;
 
-        const succeeded = results.filter(r => r.status === "fulfilled").length;
-        const failed = results.filter(r => r.status === "rejected").length;
+        // Procesar secuencialmente para no saturar el pool de conexiones
+        for (const didOwner of didOwners) {
+            if (EMPRESAS_BLOQUEADAS.has(didOwner)) {
+                continue;
+            }
+
+            try {
+                await procesarCdcParaEmpresa(didOwner);
+                succeeded += 1;
+            } catch (err) {
+                failed += 1;
+                console.error(`❌ [CDC] Error empresa ${didOwner}:`, err?.message || err);
+            }
+        }
+
         const elapsed = Date.now() - startedAt;
 
-        console.log(`✅ [CDC] Tick completado: éxito=${succeeded}, error=${failed}, tiempo=${elapsed}ms`);
+        console.log(`✅ [CDC] Tick completado: éxito=${succeeded}, error=${failed}, tiempo=${(elapsed / 1000).toFixed(1)}s`);
     } catch (err) {
         const elapsed = Date.now() - startedAt;
         console.error("❌ [CDC] Error en tick:", {
