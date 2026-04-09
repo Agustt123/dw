@@ -41,50 +41,35 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaDataStr = await redisClient.get("empresasData");
 
         if (!empresaDataStr) {
-            console.error("❌ No se encontró 'empresasData' en Redis.");
+            console.error("No se encontro 'empresasData' en Redis.");
             return;
         }
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-CREATE TABLE IF NOT EXISTS devoluciones (
-  id INT NOT NULL AUTO_INCREMENT,
-  did INT NOT NULL,
-  didEnvios VARCHAR(512) NOT NULL,
-  autofecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  quien INT NOT NULL,
-  obs TEXT NOT NULL,
-  superado INT NOT NULL DEFAULT 0,
-  elim INT NOT NULL DEFAULT 0,
-  PRIMARY KEY (id),
-  KEY idx_devoluciones_did (did),
-  KEY idx_devoluciones_autofecha (autofecha)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-`;
+            ALTER TABLE envios_historial
+            ADD COLUMN redis TINYINT NOT NULL DEFAULT -1
+        `;
+
         for (const didOwnerStr of didOwners) {
             const didOwner = parseInt(didOwnerStr, 10);
             if (isNaN(didOwner)) continue;
-
-
-
-            if (didOwner === 275 || didOwner === 276 || didOwner === 345) continue;
+            if (EMPRESAS_BLOQUEADAS.has(didOwner)) continue;
 
             const conn = await getConnection(didOwner);
+
             try {
-                await executeQuery(conn, query, [didOwner], true);
-
-
-                await conn.release();
-
-                console.log(`✅ Query ejecutada para empresa ${didOwner}`);
+                await executeQuery(conn, query);
+                console.log(`Empresa ${didOwner}: columna redis agregada en envios_historial`);
             } catch (err) {
+                console.error(`Error ejecutando query para empresa ${didOwner}:`, err.message);
+            } finally {
                 await conn.release();
-                console.error(`❌ Error ejecutando query para empresa ${didOwner}:`, err.message);
             }
         }
     } catch (err) {
-        console.error("❌ Error general en corregirFechasHistorialTodasEmpresas:", err.message);
+        console.error("Error general en corregirFechasHistorialTodasEmpresas:", err.message);
     }
 }
 async function insertarDepositoCentralSiFalta_TodasEmpresas() {
@@ -247,12 +232,12 @@ async function contarEnviosTodasEmpresas() {
         const didOwners = Object.keys(empresaData);
         console.log(`Empresas encontradas: ${didOwners.length}`);
 
-        const fechaInicioDesde = "2026-01-01 00:00:00";
+        const fechaInicioDesde = "2026-04-07 00:00:00";
 
         const countQuery = `
             SELECT COUNT(*) AS cantidad
-            FROM envios_historial
-            WHERE fecha > ?
+            FROM envios
+            WHERE fecha_inicio > ? and fecha_inicio < '2026-04-07 23:59:59'
       
         `;
 
