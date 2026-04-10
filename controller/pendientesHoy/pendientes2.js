@@ -10,6 +10,7 @@ const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
 const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
+const PEN_FETCH = Number(process.env.PEN_FETCH || 1000);
 let resumenNoDisponibleLogueado = false;
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -215,14 +216,21 @@ async function preloadPrevFromHomeApp(conn, rows) {
     if (!enviosSet.size) continue;
     console.log(`[PEN2] preload previos owner=${owner} envios=${enviosSet.size}`);
 
+    const envios = Array.from(enviosSet);
+    const whereFinds = envios.map(() => `FIND_IN_SET(?, didsPaquetes_cierre) > 0`).join(" OR ");
     const qPrevBatch = `
       SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
       FROM home_app
       WHERE didOwner = ?
+        AND (${whereFinds})
       ORDER BY dia DESC, autofecha DESC
     `;
 
-    const prevRows = await executeQuery(conn, qPrevBatch, [owner]);
+    const ownerStartedAt = Date.now();
+    const prevRows = await executeQuery(conn, qPrevBatch, [owner, ...envios], { timeoutMs: 120000 });
+    console.log(
+      `[PEN2] preload previos owner=${owner} rows=${prevRows.length} elapsedMs=${Date.now() - ownerStartedAt}`
+    );
 
     for (const prev of prevRows) {
       const cierreSet = parseCSVToSet(prev.didsPaquetes_cierre);
@@ -584,7 +592,7 @@ async function pendientesHoy() {
 
   try {
     console.log("[PEN2] pendientesHoy inicio");
-    const FETCH = 3000;
+    const FETCH = PEN_FETCH;
 
     const selectCDC = `
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
