@@ -1,7 +1,7 @@
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 
 const LOOP_PAUSE_MS = Number(process.env.PEN_LOOP_PAUSE_MS || 1000);
-const RUN_TIMEOUT_MS = Number(process.env.PEN_TIMEOUT_MS || 150000);
+const RUN_TIMEOUT_MS = Number(process.env.PEN_TIMEOUT_MS || 9000000);
 
 let running = false;
 let stopRequested = false;
