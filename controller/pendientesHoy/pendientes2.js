@@ -11,6 +11,7 @@ const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
 const PEN_FETCH = Number(process.env.PEN_FETCH || 1000);
+const PEN_PREV_CACHE_DAYS = Number(process.env.PEN_PREV_CACHE_DAYS || 2);
 let resumenNoDisponibleLogueado = false;
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -28,15 +29,49 @@ const nEstado = (v) => {
 // ----------------- Cache en memoria (GLOBAL) -----------------
 // key: "owner|cliente|chofer|estado|dia"
 const homeAppCache = new Map();
+// key: "owner|envio" => { estado, didChofer, didCliente, dia, cachedAt }
+const prevStateRecentCache = new Map();
 
 const makeKey = (owner, cliente, chofer, estado, dia) =>
   `${owner}|${cliente}|${chofer}|${estado}|${dia}`;
+const makePrevStateKey = (owner, envio) => `${owner}|${envio}`;
 
 function parseCSVToSet(s) {
   const set = new Set();
   if (!s || !String(s).trim()) return set;
   for (const x of String(s).split(",").map(t => t.trim()).filter(Boolean)) set.add(x);
   return set;
+}
+
+function getCutoffDia(days = PEN_PREV_CACHE_DAYS) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - Math.max(0, days));
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(d);
+}
+
+function isDiaRecentEnough(dia, cutoffDia) {
+  return Boolean(dia) && String(dia) >= String(cutoffDia);
+}
+
+function setRecentPrevState(owner, envio, prev) {
+  if (!owner || !envio || !prev) return;
+  prevStateRecentCache.set(makePrevStateKey(owner, envio), {
+    estado: prev.estado,
+    didChofer: Number(prev.didChofer) || 0,
+    didCliente: Number(prev.didCliente) || 0,
+    dia: prev.dia || null,
+    cachedAt: Date.now(),
+  });
+}
+
+function getRecentPrevState(owner, envio, cutoffDia) {
+  const cached = prevStateRecentCache.get(makePrevStateKey(owner, envio));
+  if (!cached) return null;
+  if (!isDiaRecentEnough(cached.dia, cutoffDia)) return null;
+  return cached;
 }
 
 async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
@@ -202,6 +237,7 @@ async function preloadPrevFromHomeApp(conn, rows) {
   const startedAt = Date.now();
   const prevMap = new Map();
   const enviosPorOwner = new Map();
+  const cutoffDia = getCutoffDia(PEN_PREV_CACHE_DAYS);
 
   for (const row of rows) {
     const owner = Number(row.didOwner);
@@ -216,38 +252,105 @@ async function preloadPrevFromHomeApp(conn, rows) {
     if (!enviosSet.size) continue;
     console.log(`[PEN2] preload previos owner=${owner} envios=${enviosSet.size}`);
 
-    const envios = Array.from(enviosSet);
-    const whereFinds = envios.map(() => `FIND_IN_SET(?, didsPaquetes_cierre) > 0`).join(" OR ");
-    const qPrevBatch = `
-      SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
-      FROM home_app
-      WHERE didOwner = ?
-        AND (${whereFinds})
-      ORDER BY dia DESC, autofecha DESC
-    `;
+    const enviosPendientes = [];
+    for (const envio of enviosSet) {
+      const cached = getRecentPrevState(owner, envio, cutoffDia);
+      if (cached) {
+        prevMap.set(makePrevStateKey(owner, envio), [{
+          estado: cached.estado,
+          didChofer: cached.didChofer,
+          didCliente: cached.didCliente,
+          dia: cached.dia,
+        }]);
+      } else {
+        enviosPendientes.push(envio);
+      }
+    }
 
-    const ownerStartedAt = Date.now();
-    const prevRows = await executeQuery(conn, qPrevBatch, [owner, ...envios], { timeoutMs: 120000 });
-    console.log(
-      `[PEN2] preload previos owner=${owner} rows=${prevRows.length} elapsedMs=${Date.now() - ownerStartedAt}`
-    );
+    let totalRowsOwner = 0;
+    if (enviosPendientes.length) {
+      const ownerStartedAt = Date.now();
+      const whereFindsRecent = enviosPendientes.map(() => `FIND_IN_SET(?, didsPaquetes_cierre) > 0`).join(" OR ");
+      const qPrevRecent = `
+        SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
+        FROM home_app
+        WHERE didOwner = ?
+          AND dia >= ?
+          AND (${whereFindsRecent})
+        ORDER BY dia DESC, autofecha DESC
+      `;
+      const prevRowsRecent = await executeQuery(conn, qPrevRecent, [owner, cutoffDia, ...enviosPendientes], { timeoutMs: 120000 });
+      totalRowsOwner += prevRowsRecent.length;
 
-    for (const prev of prevRows) {
-      const cierreSet = parseCSVToSet(prev.didsPaquetes_cierre);
+      for (const prev of prevRowsRecent) {
+        const cierreSet = parseCSVToSet(prev.didsPaquetes_cierre);
 
-      for (const envio of cierreSet) {
-        if (!enviosSet.has(envio)) continue;
+        for (const envio of cierreSet) {
+          if (!enviosSet.has(envio)) continue;
 
-        const key = `${owner}|${envio}`;
-        if (!prevMap.has(key)) {
-          prevMap.set(key, [{
-            estado: prev.estado,
-            didChofer: prev.didChofer,
-            didCliente: prev.didCliente,
-            dia: prev.dia
-          }]);
+          const key = makePrevStateKey(owner, envio);
+          if (!prevMap.has(key)) {
+            const state = {
+              estado: prev.estado,
+              didChofer: prev.didChofer,
+              didCliente: prev.didCliente,
+              dia: prev.dia
+            };
+            prevMap.set(key, [state]);
+            if (isDiaRecentEnough(prev.dia, cutoffDia)) {
+              setRecentPrevState(owner, envio, state);
+            }
+          }
         }
       }
+
+      const enviosFaltantes = enviosPendientes.filter((envio) => !prevMap.has(makePrevStateKey(owner, envio)));
+      if (enviosFaltantes.length) {
+        const whereFindsFallback = enviosFaltantes.map(() => `FIND_IN_SET(?, didsPaquetes_cierre) > 0`).join(" OR ");
+        const qPrevFallback = `
+          SELECT estado, didChofer, didCliente, dia, didsPaquetes_cierre
+          FROM home_app
+          WHERE didOwner = ?
+            AND (${whereFindsFallback})
+          ORDER BY dia DESC, autofecha DESC
+        `;
+        const prevRowsFallback = await executeQuery(conn, qPrevFallback, [owner, ...enviosFaltantes], { timeoutMs: 120000 });
+        totalRowsOwner += prevRowsFallback.length;
+
+        for (const prev of prevRowsFallback) {
+          const cierreSet = parseCSVToSet(prev.didsPaquetes_cierre);
+
+          for (const envio of cierreSet) {
+            if (!enviosSet.has(envio)) continue;
+
+            const key = makePrevStateKey(owner, envio);
+            if (!prevMap.has(key)) {
+              const state = {
+                estado: prev.estado,
+                didChofer: prev.didChofer,
+                didCliente: prev.didCliente,
+                dia: prev.dia
+              };
+              prevMap.set(key, [state]);
+              if (isDiaRecentEnough(prev.dia, cutoffDia)) {
+                setRecentPrevState(owner, envio, state);
+              }
+            }
+          }
+        }
+
+        console.log(
+          `[PEN2] preload previos owner=${owner} fallbackMiss=${enviosFaltantes.length} cutoffDia=${cutoffDia}`
+        );
+      }
+
+      console.log(
+        `[PEN2] preload previos owner=${owner} rows=${totalRowsOwner} cacheHits=${enviosSet.size - enviosPendientes.length} elapsedMs=${Date.now() - ownerStartedAt}`
+      );
+    } else {
+      console.log(
+        `[PEN2] preload previos owner=${owner} rows=0 cacheHits=${enviosSet.size} elapsedMs=0`
+      );
     }
   }
 
@@ -366,6 +469,12 @@ async function buildAprocesosEstado(rows, connection) {
     }
 
     idsProcesados.push(row.id);
+    setRecentPrevState(OW, envio, {
+      estado: EST,
+      didChofer: CHO,
+      didCliente: CLI,
+      dia,
+    });
   }
   console.log(`[PEN2] buildAprocesosEstado fin rows=${rows.length} prevMap=${prevMap.size} elapsedMs=${Date.now() - startedAt}`);
   return Aprocesos;
@@ -462,6 +571,14 @@ async function buildAprocesosAsignaciones(conn, rows) {
     }
 
     idsProcesados.push(row.id);
+    if (CHO !== 0) {
+      setRecentPrevState(OW, envio, {
+        estado: EST,
+        didChofer: CHO,
+        didCliente: CLI,
+        dia,
+      });
+    }
   }
   console.log(`[PEN2] buildAprocesosAsignaciones fin rows=${rows.length} elapsedMs=${Date.now() - startedAt}`);
   return Aprocesos;
