@@ -11,8 +11,6 @@ const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
 let resumenNoDisponibleLogueado = false;
-let lastCdcId = 0;
-
 function getDiaFromTS(ts) {
   const d = new Date(ts);
   const ok = isNaN(d.getTime()) ? new Date() : d;
@@ -102,14 +100,20 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
       didsPaquetes_cierre  = VALUES(didsPaquetes_cierre),
       autofecha            = NOW()
   `;
-  await executeQuery(conn, upsert, [
+  const result = await executeQuery(conn, upsert, [
     owner, cliente, chofer, estado,
     didsPaqueteStr,
     didsPaquetesCierreStr,
     dia
   ], true);
-
   entry.dirty = false;
+
+  return {
+    affectedRows: Number(result?.affectedRows || 0),
+    changedRows: Number(result?.changedRows || 0),
+    historialSize: entry.historial.size,
+    cierreSize: entry.cierre.size,
+  };
 }
 
 function esTablaNoExiste(error) {
@@ -460,6 +464,12 @@ async function aplicarAprocesosAHommeApp(conn) {
   const startedAt = Date.now();
   const COMMIT_EVERY = 300;
   let ops = 0;
+  let owners = 0;
+  let upsertsHomeApp = 0;
+  let upsertsResumen = 0;
+  let totalPositivos = 0;
+  let totalNegativos = 0;
+  let sampleLogs = 0;
 
   const begin = async () => executeQuery(conn, "START TRANSACTION");
   const commit = async () => executeQuery(conn, "COMMIT");
@@ -471,6 +481,7 @@ async function aplicarAprocesosAHommeApp(conn) {
     for (const ownerKey in Aprocesos) {
       const owner = Number(ownerKey);
       const porCliente = Aprocesos[ownerKey];
+      owners += 1;
       console.log(`[PEN2] flush owner=${owner} clientes=${Object.keys(porCliente).length}`);
 
       for (const clienteKey in porCliente) {
@@ -490,6 +501,8 @@ async function aplicarAprocesosAHommeApp(conn) {
               const pos = [...new Set(nodo?.[1] || [])];
               const neg = [...new Set(nodo?.[0] || [])];
               if (!pos.length && !neg.length) continue;
+              totalPositivos += pos.length;
+              totalNegativos += neg.length;
 
               // ✅ 1) cargar combo 1 vez desde DB (lazy)
               const entry = await getComboEntry(conn, owner, cliente, chofer, estado, dia);
@@ -500,8 +513,17 @@ async function aplicarAprocesosAHommeApp(conn) {
 
 
               // ✅ 3) flush inmediato (si querés diferido, lo cambiamos)
-              await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
+              const flushStats = await flushEntry(conn, owner, cliente, chofer, estado, dia, entry);
+              upsertsHomeApp += 1;
               await upsertResumen(conn, owner, cliente, chofer, estado, dia, entry);
+              upsertsResumen += 1;
+
+              if (sampleLogs < 20) {
+                sampleLogs += 1;
+                console.log(
+                  `[PEN2] home_app upsert owner=${owner} cliente=${cliente} chofer=${chofer} estado=${estado} dia=${dia} pos=${pos.length} neg=${neg.length} historial=${flushStats?.historialSize ?? "?"} cierre=${flushStats?.cierreSize ?? "?"} affected=${flushStats?.affectedRows ?? 0} changed=${flushStats?.changedRows ?? 0}`
+                );
+              }
 
               ops += 1;
               if (ops % COMMIT_EVERY === 0) {
@@ -516,7 +538,9 @@ async function aplicarAprocesosAHommeApp(conn) {
     }
 
     await commit();
-    console.log(`[PEN2] aplicarAprocesosAHommeApp fin ops=${ops} elapsedMs=${Date.now() - startedAt}`);
+    console.log(
+      `[PEN2] aplicarAprocesosAHommeApp fin owners=${owners} ops=${ops} upsertsHomeApp=${upsertsHomeApp} upsertsResumen=${upsertsResumen} pos=${totalPositivos} neg=${totalNegativos} elapsedMs=${Date.now() - startedAt}`
+    );
   } catch (e) {
     try { await rollback(); } catch (_) { }
     throw e;
@@ -525,6 +549,7 @@ async function aplicarAprocesosAHommeApp(conn) {
   // Marcar CDC como procesado
   if (idsProcesados.length > 0) {
     const CHUNK = 1000;
+    console.log(`[PEN2] marcando cdc procesado ids=${idsProcesados.length} chunks=${Math.ceil(idsProcesados.length / CHUNK)}`);
     for (let i = 0; i < idsProcesados.length; i += CHUNK) {
       const slice = idsProcesados.slice(i, i + CHUNK);
       const updCdc = `
@@ -532,7 +557,10 @@ async function aplicarAprocesosAHommeApp(conn) {
         SET procesado=1, fProcesado=NOW()
         WHERE id IN (${slice.map(() => "?").join(",")})
       `;
-      await executeQuery(conn, updCdc, slice);
+      const result = await executeQuery(conn, updCdc, slice);
+      console.log(
+        `[PEN2] cdc chunk procesado fromId=${slice[0]} toId=${slice[slice.length - 1]} size=${slice.length} affected=${Number(result?.affectedRows || 0)}`
+      );
     }
   }
 }
@@ -562,30 +590,32 @@ async function pendientesHoy() {
       SELECT id, didOwner, didPaquete, didCliente, didChofer, quien, estado, disparador, ejecutar, fecha,fecha_inicio
       FROM cdc
       WHERE procesado=0
-        AND id > ?
       ORDER BY id ASC
       LIMIT ?
     `;
-    let rows = await executeQuery(conn, selectCDC, [lastCdcId, FETCH]);
-
-    if (!rows.length && lastCdcId !== 0) {
-      console.log(`[PEN2] selectCDC sin filas con cursor lastCdcId=${lastCdcId}, reseteo a 0`);
-      lastCdcId = 0;
-      rows = await executeQuery(conn, selectCDC, [lastCdcId, FETCH]);
-    }
+    const rows = await executeQuery(conn, selectCDC, [FETCH]);
     console.log(`[PEN2] cdc rows=${rows.length}`);
 
     if (!rows.length) {
       console.log("[PEN2] sin filas pendientes para procesar");
-      return { ok: true, fetched: 0, processedIds: 0, descartados: 0, lastCdcId };
+      return { ok: true, fetched: 0, processedIds: 0, descartados: 0 };
     }
 
-    lastCdcId = Number(rows[rows.length - 1]?.id || lastCdcId || 0);
-    console.log(`[PEN2] cursor lastCdcId=${lastCdcId}`);
+    const firstCdcId = Number(rows[0]?.id || 0);
+    const lastCdcId = Number(rows[rows.length - 1]?.id || 0);
+    console.log(`[PEN2] lote ids ${firstCdcId}..${lastCdcId}`);
 
     const rowsClienteNull = rows.filter(r => r.didCliente == null);
-    const rowsValidas = rows.filter(r => r.didCliente != null);
-    console.log(`[PEN2] cdc validas=${rowsValidas.length} nullDidCliente=${rowsClienteNull.length}`);
+    const rowsConCliente = rows.filter(r => r.didCliente != null);
+    const rowsDisparadorInvalido = rowsConCliente.filter(
+      r => r.disparador !== "estado" && r.disparador !== "asignaciones"
+    );
+    const rowsValidas = rowsConCliente.filter(
+      r => r.disparador === "estado" || r.disparador === "asignaciones"
+    );
+    console.log(
+      `[PEN2] cdc validas=${rowsValidas.length} nullDidCliente=${rowsClienteNull.length} disparadorInvalido=${rowsDisparadorInvalido.length}`
+    );
 
     if (rowsClienteNull.length) {
       const idsNull = rowsClienteNull.map(r => r.id);
@@ -595,6 +625,17 @@ async function pendientesHoy() {
         WHERE id IN (${idsNull.map(() => "?").join(",")})
       `;
       await executeQuery(conn, updNull, idsNull);
+    }
+
+    if (rowsDisparadorInvalido.length) {
+      const idsInvalidos = rowsDisparadorInvalido.map(r => r.id);
+      const updInvalidos = `
+        UPDATE cdc
+        SET procesado=3, fProcesado=NOW()
+        WHERE id IN (${idsInvalidos.map(() => "?").join(",")})
+      `;
+      await executeQuery(conn, updInvalidos, idsInvalidos);
+      console.log(`[PEN2] cdc descartados por disparador invalido ids=${idsInvalidos.join(",")}`);
     }
 
     const rowsEstado = rowsValidas.filter(r => r.disparador === "estado");
@@ -611,7 +652,12 @@ async function pendientesHoy() {
     await aplicarAprocesosAHommeApp(conn);
     console.log("[PEN2] aplicarAprocesosAHommeApp ok");
 
-    return { ok: true, fetched: rows.length, processedIds: idsProcesados.length, descartados: rowsClienteNull.length };
+    return {
+      ok: true,
+      fetched: rows.length,
+      processedIds: idsProcesados.length,
+      descartados: rowsClienteNull.length + rowsDisparadorInvalido.length
+    };
   } catch (err) {
     fatalErr = err;
     console.error("❌ Error batch:", err);
