@@ -41,7 +41,7 @@ async function runPendientesTick() {
 async function main() {
   console.log("🚀 [PEN] Iniciando loop continuo de pendientesHoy...", {
     LOOP_PAUSE_MS,
-    RUN_TIMEOUT_MS,
+    STOP_ON_SIGNAL,
   });
 
   let tick = 0;
