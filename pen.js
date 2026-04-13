@@ -1,7 +1,7 @@
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 
-const LOOP_PAUSE_MS = Number(process.env.PEN_LOOP_PAUSE_MS || 1000);
-const STOP_ON_SIGNAL = String(process.env.PEN_STOP_ON_SIGNAL || "0") === "1";
+const LOOP_PAUSE_MS = 1000;
+const STOP_ON_SIGNAL = false;
 
 let running = false;
 let stopRequested = false;
