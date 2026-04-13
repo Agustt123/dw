@@ -10,7 +10,7 @@ const ESTADO_ANY = 999; // agregado: "existió en el día en algún estado"
 const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 
 const TZ = "America/Argentina/Buenos_Aires";
-const PEN_FETCH = Number(process.env.PEN_FETCH || 1000);
+const PEN_FETCH = Number(process.env.PEN_FETCH || 3000);
 const PEN_PREV_CACHE_DAYS = Number(process.env.PEN_PREV_CACHE_DAYS || 2);
 let resumenNoDisponibleLogueado = false;
 function getDiaFromTS(ts) {
