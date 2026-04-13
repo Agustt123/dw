@@ -2,6 +2,7 @@ const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 
 const LOOP_PAUSE_MS = Number(process.env.PEN_LOOP_PAUSE_MS || 1000);
 const RUN_TIMEOUT_MS = Number(process.env.PEN_TIMEOUT_MS || 9000000);
+const STOP_ON_SIGNAL = String(process.env.PEN_STOP_ON_SIGNAL || "0") === "1";
 
 let running = false;
 let stopRequested = false;
@@ -79,8 +80,21 @@ function requestStop(signal) {
   stopRequested = true;
 }
 
-process.on("SIGINT", () => requestStop("SIGINT"));
-process.on("SIGTERM", () => requestStop("SIGTERM"));
+process.on("SIGINT", () => {
+  if (!STOP_ON_SIGNAL) {
+    console.log("[PEN] SIGINT recibido; lo ignoro para mantener viva la cache en memoria");
+    return;
+  }
+  requestStop("SIGINT");
+});
+
+process.on("SIGTERM", () => {
+  if (!STOP_ON_SIGNAL) {
+    console.log("[PEN] SIGTERM recibido; lo ignoro para mantener viva la cache en memoria");
+    return;
+  }
+  requestStop("SIGTERM");
+});
 
 process.on("unhandledRejection", (reason) => {
   console.error("❌ [PEN] unhandledRejection:", reason);
