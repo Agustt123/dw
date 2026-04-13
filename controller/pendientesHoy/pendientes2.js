@@ -14,6 +14,8 @@ const PEN_FETCH = Number(process.env.PEN_FETCH || 3000);
 const PEN_PREV_CACHE_DAYS = Number(process.env.PEN_PREV_CACHE_DAYS || 2);
 const PEN_HOMEAPP_CACHE_DAYS = Number(process.env.PEN_HOMEAPP_CACHE_DAYS || 0);
 const PEN_PREV_FIND_CHUNK = Number(process.env.PEN_PREV_FIND_CHUNK || 200);
+const PEN_QUERY_TIMEOUT_MS = Number(process.env.PEN_QUERY_TIMEOUT_MS || 900000);
+const PEN_PREV_QUERY_TIMEOUT_MS = Number(process.env.PEN_PREV_QUERY_TIMEOUT_MS || 900000);
 let resumenNoDisponibleLogueado = false;
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -125,7 +127,7 @@ async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
     WHERE didOwner=? AND didCliente=? AND didChofer=? AND estado=? AND dia=?
     LIMIT 1
   `;
-  const rows = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
+  const rows = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
   perfStats.loadComboCalls += 1;
   perfStats.loadComboMs += Date.now() - startedAt;
 
@@ -191,7 +193,7 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
     didsPaqueteStr,
     didsPaquetesCierreStr,
     dia
-  ], true);
+  ], { log: true, timeoutMs: PEN_QUERY_TIMEOUT_MS });
   entry.dirty = false;
   perfStats.flushEntryCalls += 1;
   perfStats.flushEntryMs += Date.now() - startedAt;
@@ -228,7 +230,7 @@ async function upsertResumen(conn, owner, cliente, chofer, estado, dia, entry) {
       estado,
       dia,
       entry?.historial?.size || 0,
-    ]);
+    ], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
     perfStats.upsertResumenCalls += 1;
     perfStats.upsertResumenMs += Date.now() - startedAt;
   } catch (error) {
@@ -287,7 +289,7 @@ async function getPrevFromHomeApp(conn, owner, envio) {
     ORDER BY dia DESC, autofecha DESC
     LIMIT 1
   `;
-  return await executeQuery(conn, qPrev, [owner, String(envio)]);
+  return await executeQuery(conn, qPrev, [owner, String(envio)], { timeoutMs: PEN_PREV_QUERY_TIMEOUT_MS });
 }
 
 function chunkArray(arr, size) {
@@ -351,7 +353,7 @@ async function lookupPrevRowsInChunks(conn, owner, envios, cutoffDia = null) {
       ? [owner, cutoffDia, ...enviosChunk]
       : [owner, ...enviosChunk];
 
-    const chunkRows = await executeQuery(conn, sql, params, { timeoutMs: 120000 });
+    const chunkRows = await executeQuery(conn, sql, params, { timeoutMs: PEN_PREV_QUERY_TIMEOUT_MS });
     rows.push(...chunkRows);
     const elapsedMs = Date.now() - chunkStartedAt;
     if (cutoffDia) {
@@ -624,7 +626,7 @@ async function buildAprocesosAsignaciones(conn, rows) {
       LIMIT 1
     `;
     const prevAsignacionStartedAt = Date.now();
-    const prev = await executeQuery(conn, qChoferAnterior, [envio, OW]);
+    const prev = await executeQuery(conn, qChoferAnterior, [envio, OW], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
     perfStats.asignacionPrevCalls += 1;
     perfStats.asignacionPrevMs += Date.now() - prevAsignacionStartedAt;
 
@@ -682,9 +684,9 @@ async function aplicarAprocesosAHommeApp(conn) {
   let totalNegativos = 0;
   let sampleLogs = 0;
 
-  const begin = async () => executeQuery(conn, "START TRANSACTION");
-  const commit = async () => executeQuery(conn, "COMMIT");
-  const rollback = async () => executeQuery(conn, "ROLLBACK");
+  const begin = async () => executeQuery(conn, "START TRANSACTION", [], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
+  const commit = async () => executeQuery(conn, "COMMIT", [], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
+  const rollback = async () => executeQuery(conn, "ROLLBACK", [], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
 
   await begin();
 
@@ -768,7 +770,7 @@ async function aplicarAprocesosAHommeApp(conn) {
         SET procesado=1, fProcesado=NOW()
         WHERE id IN (${slice.map(() => "?").join(",")})
       `;
-      const result = await executeQuery(conn, updCdc, slice);
+      const result = await executeQuery(conn, updCdc, slice, { timeoutMs: PEN_QUERY_TIMEOUT_MS });
       console.log(
         `[PEN2] cdc chunk procesado fromId=${slice[0]} toId=${slice[slice.length - 1]} size=${slice.length} affected=${Number(result?.affectedRows || 0)}`
       );
@@ -806,7 +808,7 @@ async function pendientesHoy() {
       ORDER BY id ASC
       LIMIT ?
     `;
-    const rows = await executeQuery(conn, selectCDC, [FETCH]);
+    const rows = await executeQuery(conn, selectCDC, [FETCH], { timeoutMs: PEN_QUERY_TIMEOUT_MS });
     console.log(`[PEN2] cdc rows=${rows.length}`);
 
     if (!rows.length) {
@@ -837,7 +839,7 @@ async function pendientesHoy() {
         SET procesado=2, fProcesado=NOW()
         WHERE id IN (${idsNull.map(() => "?").join(",")})
       `;
-      await executeQuery(conn, updNull, idsNull);
+      await executeQuery(conn, updNull, idsNull, { timeoutMs: PEN_QUERY_TIMEOUT_MS });
     }
 
     if (rowsDisparadorInvalido.length) {
@@ -847,7 +849,7 @@ async function pendientesHoy() {
         SET procesado=3, fProcesado=NOW()
         WHERE id IN (${idsInvalidos.map(() => "?").join(",")})
       `;
-      await executeQuery(conn, updInvalidos, idsInvalidos);
+      await executeQuery(conn, updInvalidos, idsInvalidos, { timeoutMs: PEN_QUERY_TIMEOUT_MS });
       console.log(`[PEN2] cdc descartados por disparador invalido ids=${idsInvalidos.join(",")}`);
     }
 
