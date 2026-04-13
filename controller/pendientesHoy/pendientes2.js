@@ -38,6 +38,35 @@ const makeKey = (owner, cliente, chofer, estado, dia) =>
   `${owner}|${cliente}|${chofer}|${estado}|${dia}`;
 const makePrevStateKey = (owner, envio) => `${owner}|${envio}`;
 
+function createPerfStats() {
+  return {
+    homeAppCacheHits: 0,
+    homeAppCacheMisses: 0,
+    loadComboCalls: 0,
+    loadComboMs: 0,
+    prevCacheHits: 0,
+    prevCacheMisses: 0,
+    prevRecentQueryCalls: 0,
+    prevRecentQueryMs: 0,
+    prevRecentRows: 0,
+    prevFallbackQueryCalls: 0,
+    prevFallbackQueryMs: 0,
+    prevFallbackRows: 0,
+    asignacionPrevCalls: 0,
+    asignacionPrevMs: 0,
+    flushEntryCalls: 0,
+    flushEntryMs: 0,
+    upsertResumenCalls: 0,
+    upsertResumenMs: 0,
+  };
+}
+
+const perfStats = createPerfStats();
+
+function resetPerfStats() {
+  Object.assign(perfStats, createPerfStats());
+}
+
 function parseCSVToSet(s) {
   const set = new Set();
   if (!s || !String(s).trim()) return set;
@@ -89,6 +118,7 @@ function getRecentPrevState(owner, envio, cutoffDia) {
 }
 
 async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
+  const startedAt = Date.now();
   const sel = `
     SELECT didsPaquete, didsPaquetes_cierre
     FROM home_app
@@ -96,6 +126,8 @@ async function loadComboFromDB(conn, owner, cliente, chofer, estado, dia) {
     LIMIT 1
   `;
   const rows = await executeQuery(conn, sel, [owner, cliente, chofer, estado, dia]);
+  perfStats.loadComboCalls += 1;
+  perfStats.loadComboMs += Date.now() - startedAt;
 
   if (rows.length) {
     return {
@@ -112,8 +144,11 @@ async function getComboEntry(conn, owner, cliente, chofer, estado, dia) {
   const k = makeKey(owner, cliente, chofer, estado, dia);
   let entry = homeAppCache.get(k);
   if (!entry) {
+    perfStats.homeAppCacheMisses += 1;
     entry = await loadComboFromDB(conn, owner, cliente, chofer, estado, dia);
     homeAppCache.set(k, entry);
+  } else {
+    perfStats.homeAppCacheHits += 1;
   }
   return entry;
 }
@@ -137,6 +172,7 @@ function applyDeltas(entry, posArr, negArr, estado) {
 async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
   if (!entry?.dirty) return;
 
+  const startedAt = Date.now();
   const didsPaqueteStr = Array.from(entry.historial).join(",");
   const didsPaquetesCierreStr = Array.from(entry.cierre).join(",");
 
@@ -157,6 +193,8 @@ async function flushEntry(conn, owner, cliente, chofer, estado, dia, entry) {
     dia
   ], true);
   entry.dirty = false;
+  perfStats.flushEntryCalls += 1;
+  perfStats.flushEntryMs += Date.now() - startedAt;
 
   return {
     affectedRows: Number(result?.affectedRows || 0),
@@ -171,6 +209,7 @@ function esTablaNoExiste(error) {
 }
 
 async function upsertResumen(conn, owner, cliente, chofer, estado, dia, entry) {
+  const startedAt = Date.now();
   const sql = `
     INSERT INTO home_app_resumen
       (didOwner, didCliente, didChofer, estado, dia, cantidad)
@@ -190,6 +229,8 @@ async function upsertResumen(conn, owner, cliente, chofer, estado, dia, entry) {
       dia,
       entry?.historial?.size || 0,
     ]);
+    perfStats.upsertResumenCalls += 1;
+    perfStats.upsertResumenMs += Date.now() - startedAt;
   } catch (error) {
     if (!esTablaNoExiste(error)) throw error;
 
@@ -287,6 +328,7 @@ async function lookupPrevRowsInChunks(conn, owner, envios, cutoffDia = null) {
   const rows = [];
 
   for (const enviosChunk of chunks) {
+    const chunkStartedAt = Date.now();
     const whereFinds = enviosChunk.map(() => `FIND_IN_SET(?, didsPaquetes_cierre) > 0`).join(" OR ");
     const sql = cutoffDia
       ? `
@@ -311,6 +353,19 @@ async function lookupPrevRowsInChunks(conn, owner, envios, cutoffDia = null) {
 
     const chunkRows = await executeQuery(conn, sql, params, { timeoutMs: 120000 });
     rows.push(...chunkRows);
+    const elapsedMs = Date.now() - chunkStartedAt;
+    if (cutoffDia) {
+      perfStats.prevRecentQueryCalls += 1;
+      perfStats.prevRecentQueryMs += elapsedMs;
+      perfStats.prevRecentRows += chunkRows.length;
+    } else {
+      perfStats.prevFallbackQueryCalls += 1;
+      perfStats.prevFallbackQueryMs += elapsedMs;
+      perfStats.prevFallbackRows += chunkRows.length;
+    }
+    console.log(
+      `[PEN2][TIME] prevChunk owner=${owner} tipo=${cutoffDia ? "recent" : "fallback"} envios=${enviosChunk.length} rows=${chunkRows.length} elapsedMs=${elapsedMs}`
+    );
   }
 
   return rows;
@@ -339,6 +394,7 @@ async function preloadPrevFromHomeApp(conn, rows) {
     for (const envio of enviosSet) {
       const cached = getRecentPrevState(owner, envio, cutoffDia);
       if (cached) {
+        perfStats.prevCacheHits += 1;
         prevMap.set(makePrevStateKey(owner, envio), [{
           estado: cached.estado,
           didChofer: cached.didChofer,
@@ -346,6 +402,7 @@ async function preloadPrevFromHomeApp(conn, rows) {
           dia: cached.dia,
         }]);
       } else {
+        perfStats.prevCacheMisses += 1;
         enviosPendientes.push(envio);
       }
     }
@@ -566,7 +623,10 @@ async function buildAprocesosAsignaciones(conn, rows) {
       ORDER BY id DESC
       LIMIT 1
     `;
+    const prevAsignacionStartedAt = Date.now();
     const prev = await executeQuery(conn, qChoferAnterior, [envio, OW]);
+    perfStats.asignacionPrevCalls += 1;
+    perfStats.asignacionPrevMs += Date.now() - prevAsignacionStartedAt;
 
     if (prev.length) {
       const choPrev = prev[0].didChofer || 0;
@@ -729,9 +789,11 @@ async function pendientesHoy() {
   PENDIENTES_HOY_RUNNING = true;
 
   resetState();
+  resetPerfStats();
 
   const conn = await getConnectionLocalPendientes();
   let fatalErr = null;
+  const startedAt = Date.now();
 
   try {
     console.log("[PEN2] pendientesHoy inicio");
@@ -814,6 +876,9 @@ async function pendientesHoy() {
     console.error("❌ Error batch:", err);
     throw err;
   } finally {
+    console.log(
+      `[PEN2][TIME] resumen fetchedMs=${Date.now() - startedAt} homeAppCacheHits=${perfStats.homeAppCacheHits} homeAppCacheMisses=${perfStats.homeAppCacheMisses} loadComboCalls=${perfStats.loadComboCalls} loadComboMs=${perfStats.loadComboMs} prevCacheHits=${perfStats.prevCacheHits} prevCacheMisses=${perfStats.prevCacheMisses} prevRecentCalls=${perfStats.prevRecentQueryCalls} prevRecentMs=${perfStats.prevRecentQueryMs} prevRecentRows=${perfStats.prevRecentRows} prevFallbackCalls=${perfStats.prevFallbackQueryCalls} prevFallbackMs=${perfStats.prevFallbackQueryMs} prevFallbackRows=${perfStats.prevFallbackRows} asignacionPrevCalls=${perfStats.asignacionPrevCalls} asignacionPrevMs=${perfStats.asignacionPrevMs} flushEntryCalls=${perfStats.flushEntryCalls} flushEntryMs=${perfStats.flushEntryMs} upsertResumenCalls=${perfStats.upsertResumenCalls} upsertResumenMs=${perfStats.upsertResumenMs}`
+    );
     PENDIENTES_HOY_RUNNING = false;
 
     try {
