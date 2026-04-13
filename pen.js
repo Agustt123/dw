@@ -1,7 +1,6 @@
 const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
 
 const LOOP_PAUSE_MS = Number(process.env.PEN_LOOP_PAUSE_MS || 1000);
-const RUN_TIMEOUT_MS = Number(process.env.PEN_TIMEOUT_MS || 9000000);
 const STOP_ON_SIGNAL = String(process.env.PEN_STOP_ON_SIGNAL || "0") === "1";
 
 let running = false;
@@ -9,22 +8,6 @@ let stopRequested = false;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function withTimeout(promise, timeoutMs, label) {
-  let timer = null;
-
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`${label} timeout despues de ${timeoutMs} ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 async function runPendientesTick() {
@@ -38,7 +21,7 @@ async function runPendientesTick() {
 
   try {
     console.log("🔁 [PEN] pendientesHoy: iniciando...");
-    const result = await withTimeout(pendientesHoy(), RUN_TIMEOUT_MS, "pendientesHoy");
+    const result = await pendientesHoy();
     const elapsedMs = Date.now() - startedAt;
     console.log("✅ [PEN] pendientesHoy completado", {
       elapsedMs,
