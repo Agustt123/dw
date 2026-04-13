@@ -12,6 +12,7 @@ const ESTADO_ANY_EVENTO = 998 // agregado: "existió en el día del evento"
 const TZ = "America/Argentina/Buenos_Aires";
 const PEN_FETCH = Number(process.env.PEN_FETCH || 3000);
 const PEN_PREV_CACHE_DAYS = Number(process.env.PEN_PREV_CACHE_DAYS || 2);
+const PEN_HOMEAPP_CACHE_DAYS = Number(process.env.PEN_HOMEAPP_CACHE_DAYS || 0);
 let resumenNoDisponibleLogueado = false;
 function getDiaFromTS(ts) {
   const d = new Date(ts);
@@ -54,6 +55,18 @@ function getCutoffDia(days = PEN_PREV_CACHE_DAYS) {
 
 function isDiaRecentEnough(dia, cutoffDia) {
   return Boolean(dia) && String(dia) >= String(cutoffDia);
+}
+
+function pruneMapByDia(cacheMap, cutoffDia) {
+  for (const [key, value] of cacheMap.entries()) {
+    const dia = typeof value === "object" && value?.dia
+      ? value.dia
+      : String(key).split("|").pop();
+
+    if (!isDiaRecentEnough(dia, cutoffDia)) {
+      cacheMap.delete(key);
+    }
+  }
 }
 
 function setRecentPrevState(owner, envio, prev) {
@@ -191,8 +204,10 @@ function resetState() {
   for (const k of Object.keys(Aprocesos)) delete Aprocesos[k];
   idsProcesados.length = 0;
 
-  // ✅ cache solo para la corrida (si querés 2-3 días, esto lo cambiamos)
-  homeAppCache.clear();
+  // Mantengo en memoria la cache reciente de home_app para reutilizar
+  // los upserts del mismo dia entre ticks del loop continuo.
+  pruneMapByDia(homeAppCache, getCutoffDia(PEN_HOMEAPP_CACHE_DAYS));
+  pruneMapByDia(prevStateRecentCache, getCutoffDia(PEN_PREV_CACHE_DAYS));
 }
 
 // ----------------- Helpers -----------------
