@@ -418,12 +418,8 @@ async function preloadPrevFromHomeApp(conn, rows) {
 
       const enviosFaltantes = enviosPendientes.filter((envio) => !prevMap.has(makePrevStateKey(owner, envio)));
       if (enviosFaltantes.length) {
-        const prevRowsFallback = await lookupPrevRowsInChunks(conn, owner, enviosFaltantes);
-        totalRowsOwner += prevRowsFallback.length;
-        applyPrevRowsToMap(prevRowsFallback, enviosSet, owner, prevMap, cutoffDia);
-
         console.log(
-          `[PEN2] preload previos owner=${owner} fallbackMiss=${enviosFaltantes.length} cutoffDia=${cutoffDia}`
+          `[PEN2] preload previos owner=${owner} fallbackOmitido=${enviosFaltantes.length} cutoffDia=${cutoffDia}`
         );
       }
 
