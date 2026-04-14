@@ -48,8 +48,7 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-            ALTER TABLE envios_historial
-            ADD COLUMN redis TINYINT NOT NULL DEFAULT -1
+            ALTER TABLE costos_envios ADD COLUMN dataDetalle TEXT NOT NULL AFTER nameZonaCostoCliente;
         `;
 
         for (const didOwnerStr of didOwners) {
@@ -825,7 +824,7 @@ async function completarDidClientePorMlVendedorId() {
 
 async function main() {
     console.log("Ejecutando procesarScript...");
-    await contarEnviosTodasEmpresas();
+    await corregirFechasHistorialTodasEmpresas();
     console.log("Fin de procesarScript");
 }
 
