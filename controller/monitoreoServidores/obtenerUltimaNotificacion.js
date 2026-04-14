@@ -150,8 +150,7 @@ async function obtenerUltimaNotificacionV2() {
                         temperaturaCpu,
                         carga1m,
                         ramProcesoMb,
-                        cpuProceso,
-                        autofecha
+                        cpuProceso
                     FROM sat_monitoreo_recursos
                     WHERE did = ?
                     ORDER BY CASE WHEN servidor = 'conjunto' THEN 0 ELSE 1 END, servidor ASC
