@@ -54,6 +54,7 @@ async function insertarNotificacionesUltima(body = {}) {
             sat_afectados: toJsonValue(body.sat_afectados),
             peor_pct: toInt(body.peor_pct, 0),
             tiempo_imagen_ms: toInt(body.tiempo_imagen_ms, 0),
+            enviada: toInt(body.enviada, 0),
         };
 
         const result = await executeQuery(
@@ -80,8 +81,9 @@ async function insertarNotificacionesUltima(body = {}) {
                     sat_resumen,
                     sat_afectados,
                     peor_pct,
-                    tiempo_imagen_ms
-                ) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tiempo_imagen_ms,
+                    enviada
+                ) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 payload.token,
@@ -104,6 +106,7 @@ async function insertarNotificacionesUltima(body = {}) {
                 payload.sat_afectados,
                 payload.peor_pct,
                 payload.tiempo_imagen_ms,
+                payload.enviada,
             ],
             { timeoutMs: MONITOREO_TIMEOUT_MS }
         );

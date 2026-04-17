@@ -45,7 +45,8 @@ async function obtenerNotificacionBase(db, didNotificaciones = null) {
                 sat_resumen,
                 sat_afectados,
                 peor_pct,
-                tiempo_imagen_ms
+                tiempo_imagen_ms,
+                enviada
             FROM notificaciones_detalle
             ${targetId ? "WHERE id = ?" : ""}
             ORDER BY id DESC
