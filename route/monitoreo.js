@@ -146,7 +146,9 @@ monitorear.post('/notificaciones-ultima', async (req, res) => {
 
 monitorear.get('/notificaciones-ultima', async (req, res) => {
     try {
-        const resultado = await obtenerUltimaNotificacion();
+        const didNotificaciones =
+            req?.query?.did_notificaciones ?? req?.query?.didNotificaciones ?? req?.query?.id ?? null;
+        const resultado = await obtenerUltimaNotificacion(didNotificaciones);
         return res.status(200).json({
             estado: true,
             data: resultado
@@ -159,7 +161,9 @@ monitorear.get('/notificaciones-ultima', async (req, res) => {
 
 monitorear.get('/notificaciones-ultima/v2', async (req, res) => {
     try {
-        const resultado = await obtenerUltimaNotificacionV2();
+        const didNotificaciones =
+            req?.query?.did_notificaciones ?? req?.query?.didNotificaciones ?? req?.query?.id ?? null;
+        const resultado = await obtenerUltimaNotificacionV2(didNotificaciones);
         return res.status(200).json({
             estado: true,
             data: resultado

@@ -11,54 +11,66 @@ function parseJsonValue(value) {
     }
 }
 
-async function obtenerUltimaNotificacion() {
+function toOptionalId(value) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) return null;
+    return parsed;
+}
+
+async function obtenerNotificacionBase(db, didNotificaciones = null) {
+    const targetId = toOptionalId(didNotificaciones);
+
+    const rows = await executeQuery(
+        db,
+        `
+            SELECT
+                id,
+                autofecha,
+                token,
+                image_url,
+                fecha,
+                mes,
+                cantidad_dia,
+                cantidad_mes,
+                anio_cantidad,
+                hoy_movimiento,
+                sev,
+                max_streak,
+                afectados,
+                uso_cpu,
+                uso_ram,
+                uso_disco,
+                pct_max,
+                sat_sev,
+                sat_resumen,
+                sat_afectados,
+                peor_pct,
+                tiempo_imagen_ms
+            FROM notificaciones_detalle
+            ${targetId ? "WHERE id = ?" : ""}
+            ORDER BY id DESC
+            LIMIT 1
+        `,
+        targetId ? [targetId] : [],
+        { timeoutMs: MONITOREO_TIMEOUT_MS }
+    );
+
+    const row = rows?.[0];
+    if (!row) return null;
+
+    return {
+        ...row,
+        afectados: parseJsonValue(row.afectados),
+        sat_afectados: parseJsonValue(row.sat_afectados),
+    };
+}
+
+async function obtenerUltimaNotificacion(didNotificaciones = null) {
     let db;
 
     try {
         db = await getConnectionLocalCdc();
-
-        const rows = await executeQuery(
-            db,
-            `
-                SELECT
-                    id,
-                    autofecha,
-                    token,
-                    image_url,
-                    fecha,
-                    mes,
-                    cantidad_dia,
-                    cantidad_mes,
-                    anio_cantidad,
-                    hoy_movimiento,
-                    sev,
-                    max_streak,
-                    afectados,
-                    uso_cpu,
-                    uso_ram,
-                    uso_disco,
-                    pct_max,
-                    sat_sev,
-                    sat_resumen,
-                    sat_afectados,
-                    peor_pct,
-                    tiempo_imagen_ms
-                FROM notificaciones_detalle
-                ORDER BY id DESC
-                LIMIT 1
-            `,
-            [],
-            { timeoutMs: MONITOREO_TIMEOUT_MS }
-        );
-
-        const row = rows?.[0];
-        if (!row) return null;
-
-        return {
-            ...row,
-            afectados: parseJsonValue(row.afectados),
-            sat_afectados: parseJsonValue(row.sat_afectados),
-        };
+        return await obtenerNotificacionBase(db, didNotificaciones);
     } catch (error) {
         console.error("Error en obtenerUltimaNotificacion:", error);
         throw {
@@ -76,47 +88,12 @@ async function obtenerUltimaNotificacion() {
     }
 }
 
-async function obtenerUltimaNotificacionV2() {
+async function obtenerUltimaNotificacionV2(didNotificaciones = null) {
     let db;
 
     try {
         db = await getConnectionLocalCdc();
-
-        const rows = await executeQuery(
-            db,
-            `
-                SELECT
-                    id,
-                    autofecha,
-                    token,
-                    image_url,
-                    fecha,
-                    mes,
-                    cantidad_dia,
-                    cantidad_mes,
-                    anio_cantidad,
-                    hoy_movimiento,
-                    sev,
-                    max_streak,
-                    afectados,
-                    uso_cpu,
-                    uso_ram,
-                    uso_disco,
-                    pct_max,
-                    sat_sev,
-                    sat_resumen,
-                    sat_afectados,
-                    peor_pct,
-                    tiempo_imagen_ms
-                FROM notificaciones_detalle
-                ORDER BY id DESC
-                LIMIT 1
-            `,
-            [],
-            { timeoutMs: MONITOREO_TIMEOUT_MS }
-        );
-
-        const row = rows?.[0];
+        const row = await obtenerNotificacionBase(db, didNotificaciones);
         if (!row) return null;
 
         const didRows = await executeQuery(
