@@ -231,12 +231,12 @@ async function contarEnviosTodasEmpresas() {
         const didOwners = Object.keys(empresaData);
         console.log(`Empresas encontradas: ${didOwners.length}`);
 
-        const fechaInicioDesde = "2026-04-09 00:00:00";
+        const fechaInicioDesde = "2026-04-20 00:00:00";
 
         const countQuery = `
             SELECT COUNT(*) AS cantidad
             FROM envios
-            WHERE fecha_inicio > ? and fecha_inicio < '2026-04-09 23:59:59'
+            WHERE fecha_inicio > ? and fecha_inicio < '2026-04-20 23:59:59'
       
         `;
 
@@ -824,7 +824,7 @@ async function completarDidClientePorMlVendedorId() {
 
 async function main() {
     console.log("Ejecutando procesarScript...");
-    await corregirFechasHistorialTodasEmpresas();
+    await contarEnviosTodasEmpresas();
     console.log("Fin de procesarScript");
 }
 

@@ -24,6 +24,7 @@ async function sincronizarEnviosUnaVez() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData);
+        console.log(`[ENVIOS] sincronizarEnviosUnaVez inicio | empresas=${didOwners.length}`);
 
         if (!didOwners.length) {
             //  console.log("⚠️ No hay empresas para sincronizar envíos.");
@@ -59,6 +60,7 @@ async function sincronizarEnviosUnaVez() {
 
             metrics.empresas += 1;
             metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
+            console.log(`[ENVIOS] empresa=${didOwner} inicio`);
 
             try {
                 await sincronizarEnviosBatchParaEmpresa(
@@ -69,6 +71,8 @@ async function sincronizarEnviosUnaVez() {
                     columnasEstadosDW,
                     metrics
                 );
+                const statsEmpresa = metrics.porEmpresa[didOwner];
+                console.log(`[ENVIOS] empresa=${didOwner} fin | envios=${statsEmpresa.envios} asig=${statsEmpresa.asignaciones} estados=${statsEmpresa.estados} elim=${statsEmpresa.eliminaciones}`);
             } catch (e) {
                 console.error(`❌ Error sincronizando empresa ${didOwner}:`, e?.message || e);
             }
@@ -81,6 +85,7 @@ async function sincronizarEnviosUnaVez() {
         } catch (_) { /* ignore */ }
 
         metrics.elapsedMs = Date.now() - metrics.startedAt;
+        console.log(`[ENVIOS] sincronizarEnviosUnaVez fin | empresas=${metrics.empresas} envios=${metrics.envios} asig=${metrics.asignaciones} estados=${metrics.estados} elim=${metrics.eliminaciones} elapsedMs=${metrics.elapsedMs}`);
     }
 
     return metrics;
@@ -98,17 +103,27 @@ async function sincronizarEnviosBatchParaEmpresa(
     let connEmpresaBad = false;
 
     try {
+        console.log(`[ENVIOS] empresa=${didOwner} getConnection inicio`);
         connEmpresa = await getConnection(didOwner);
+        console.log(`[ENVIOS] empresa=${didOwner} getConnection ok`);
 
         const enviosAntes = metrics.envios;
         const asignacionesAntes = metrics.asignaciones;
         const estadosAntes = metrics.estados;
         const eliminacionesAntes = metrics.eliminaciones;
 
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=envios inicio`);
         await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=envios fin`);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=asignaciones inicio`);
         await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=asignaciones fin`);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=estados inicio`);
         await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=estados fin`);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=eliminaciones inicio`);
         await procesarEliminaciones(connEmpresa, connDW, didOwner, metrics);
+        console.log(`[ENVIOS] empresa=${didOwner} etapa=eliminaciones fin`);
 
         const movEnvios = metrics.envios - enviosAntes;
         const movAsignaciones = metrics.asignaciones - asignacionesAntes;
@@ -140,6 +155,7 @@ async function sincronizarEnviosBatchParaEmpresa(
         console.error(`❌ Error procesando empresa ${didOwner}:`, error?.message || error);
 
     } finally {
+        console.log(`[ENVIOS] empresa=${didOwner} release inicio | bad=${connEmpresaBad}`);
         if (!connEmpresa) return;
 
         if (connEmpresaBad && typeof connEmpresa.destroy === "function") {
@@ -149,6 +165,7 @@ async function sincronizarEnviosBatchParaEmpresa(
         } else if (typeof connEmpresa.end === "function") {
             await connEmpresa.end();
         }
+        console.log(`[ENVIOS] empresa=${didOwner} release fin`);
     }
 }
 // -------------------- Procesadores --------------------
