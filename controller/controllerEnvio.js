@@ -1,6 +1,6 @@
 const { getConnection, executeQuery, redisClient, getConnectionLocalEnvios } = require("../db");
 
-const LIMITE_BATCH_ENVIOS = Number(process.env.LIMITE_BATCH_ENVIOS || 100);
+const LIMITE_BATCH_ENVIOS = Number(process.env.LIMITE_BATCH_ENVIOS || 2000);
 const LIMITE_BATCH_ASIGNACIONES = Number(process.env.LIMITE_BATCH_ASIGNACIONES || 2000);
 const LIMITE_BATCH_ESTADOS = Number(process.env.LIMITE_BATCH_ESTADOS || 2000);
 const LIMITE_BATCH_ELIMINACIONES = Number(process.env.LIMITE_BATCH_ELIMINACIONES || 2000);
@@ -29,7 +29,6 @@ async function sincronizarEnviosUnaVez() {
 
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData);
-        console.log(`[ENVIOS] sincronizarEnviosUnaVez inicio | empresas=${didOwners.length}`);
 
         if (!didOwners.length) {
             //  console.log("⚠️ No hay empresas para sincronizar envíos.");
@@ -65,7 +64,6 @@ async function sincronizarEnviosUnaVez() {
 
             metrics.empresas += 1;
             metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
-            console.log(`[ENVIOS] empresa=${didOwner} inicio`);
 
             try {
                 await sincronizarEnviosBatchParaEmpresa(
@@ -76,8 +74,6 @@ async function sincronizarEnviosUnaVez() {
                     columnasEstadosDW,
                     metrics
                 );
-                const statsEmpresa = metrics.porEmpresa[didOwner];
-                console.log(`[ENVIOS] empresa=${didOwner} fin | envios=${statsEmpresa.envios} asig=${statsEmpresa.asignaciones} estados=${statsEmpresa.estados} elim=${statsEmpresa.eliminaciones}`);
             } catch (e) {
                 console.error(`❌ Error sincronizando empresa ${didOwner}:`, e?.message || e);
             }
@@ -90,7 +86,6 @@ async function sincronizarEnviosUnaVez() {
         } catch (_) { /* ignore */ }
 
         metrics.elapsedMs = Date.now() - metrics.startedAt;
-        console.log(`[ENVIOS] sincronizarEnviosUnaVez fin | empresas=${metrics.empresas} envios=${metrics.envios} asig=${metrics.asignaciones} estados=${metrics.estados} elim=${metrics.eliminaciones} elapsedMs=${metrics.elapsedMs}`);
     }
 
     return metrics;
@@ -108,27 +103,17 @@ async function sincronizarEnviosBatchParaEmpresa(
     let connEmpresaBad = false;
 
     try {
-        console.log(`[ENVIOS] empresa=${didOwner} getConnection inicio`);
         connEmpresa = await getConnection(didOwner);
-        console.log(`[ENVIOS] empresa=${didOwner} getConnection ok`);
 
         const enviosAntes = metrics.envios;
         const asignacionesAntes = metrics.asignaciones;
         const estadosAntes = metrics.estados;
         const eliminacionesAntes = metrics.eliminaciones;
 
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=envios inicio`);
         await procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=envios fin`);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=asignaciones inicio`);
         await procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsignacionesDW, metrics);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=asignaciones fin`);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=estados inicio`);
         await procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW, metrics);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=estados fin`);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=eliminaciones inicio`);
         await procesarEliminaciones(connEmpresa, connDW, didOwner, metrics);
-        console.log(`[ENVIOS] empresa=${didOwner} etapa=eliminaciones fin`);
 
         const movEnvios = metrics.envios - enviosAntes;
         const movAsignaciones = metrics.asignaciones - asignacionesAntes;
@@ -160,7 +145,6 @@ async function sincronizarEnviosBatchParaEmpresa(
         console.error(`❌ Error procesando empresa ${didOwner}:`, error?.message || error);
 
     } finally {
-        console.log(`[ENVIOS] empresa=${didOwner} release inicio | bad=${connEmpresaBad}`);
         if (!connEmpresa) return;
 
         if (connEmpresaBad && typeof connEmpresa.destroy === "function") {
@@ -170,17 +154,14 @@ async function sincronizarEnviosBatchParaEmpresa(
         } else if (typeof connEmpresa.end === "function") {
             await connEmpresa.end();
         }
-        console.log(`[ENVIOS] empresa=${didOwner} release fin`);
     }
 }
 // -------------------- Procesadores --------------------
 
 async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, metrics) {
-    console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios tx inicio`);
     await executeQuery(connDW, "START TRANSACTION");
 
     try {
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios lastId inicio`);
         const lastEnvios = await executeQuery(
             connDW,
             `
@@ -193,9 +174,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
         );
 
         const lastIdEnvios = lastEnvios.length ? Number(lastEnvios[0].idMaxEnvios) : 0;
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios lastId fin | lastId=${lastIdEnvios}`);
 
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios select envios inicio | limit=${LIMITE_BATCH_ENVIOS}`);
         const enviosRows = await executeQuery(
             connEmpresa,
             `
@@ -208,7 +187,6 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
             `,
             [lastIdEnvios, LIMITE_BATCH_ENVIOS]
         );
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios select envios fin | rows=${enviosRows.length}`);
 
         metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
         metrics.porEmpresa[didOwner].envios += enviosRows.length;
@@ -229,17 +207,6 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
 
         for (let i = 0; i < enviosRows.length; i += 1) {
             const envio = enviosRows[i];
-            const debugEmpresa131 = didOwner === 131;
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1}/${enviosRows.length} did=${envio.did} id=${envio.id} before-build`);
-            }
-
-            if (didOwner === 131 && Number(envio.did) === 564378) {
-                console.log(`[ENVIOS][131] salto temporal diagnostico did=${envio.did} id=${envio.id}`);
-                lastProcessedId = envio.id;
-                continue;
-            }
-
             const envioDW = {
                 ...envio,
                 didEnvio: envio.did,
@@ -270,18 +237,9 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 VALUES (${placeholders})
             `;
 
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-insert`);
-            }
             const resInsert = await executeQuery(connDW, insertSql, valores, true);
             const newDwId = resInsert.insertId;
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-insert newDwId=${newDwId}`);
-            }
 
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-superado-1`);
-            }
             await executeQuery(
                 connDW,
                 `
@@ -294,13 +252,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 `,
                 [didOwner, envio.did, newDwId]
             );
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-superado-1`);
-            }
 
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-superado-0`);
-            }
             await executeQuery(
                 connDW,
                 `
@@ -310,19 +262,11 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 `,
                 [newDwId]
             );
-            if (debugEmpresa131) {
-                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-superado-0`);
-            }
 
             lastProcessedId = envio.id;
-
-            if ((i + 1) % 10 === 0 || i + 1 === enviosRows.length) {
-                console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios progreso ${i + 1}/${enviosRows.length}`);
-            }
         }
 
         if (lastProcessedId > 0) {
-            console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios update maxId | lastProcessedId=${lastProcessedId}`);
             await executeQuery(
                 connDW,
                 `
@@ -334,10 +278,8 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
             );
         }
 
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios commit`);
         await executeQuery(connDW, "COMMIT");
     } catch (error) {
-        console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios rollback`);
         await executeQuery(connDW, "ROLLBACK");
         throw error;
     }

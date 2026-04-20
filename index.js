@@ -211,7 +211,6 @@ async function startJobs() {
             });
 
         runningEnvios = false;
-        console.log("🏁 [JOBS] Envios: fin de tick");
     }
 
     function iniciarSchedulers() {
