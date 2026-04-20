@@ -1,6 +1,6 @@
 const { getConnection, executeQuery, redisClient, getConnectionLocalEnvios } = require("../db");
 
-const LIMITE_BATCH_ENVIOS = Number(process.env.LIMITE_BATCH_ENVIOS || 1000);
+const LIMITE_BATCH_ENVIOS = Number(process.env.LIMITE_BATCH_ENVIOS || 100);
 const LIMITE_BATCH_ASIGNACIONES = Number(process.env.LIMITE_BATCH_ASIGNACIONES || 2000);
 const LIMITE_BATCH_ESTADOS = Number(process.env.LIMITE_BATCH_ESTADOS || 2000);
 const LIMITE_BATCH_ELIMINACIONES = Number(process.env.LIMITE_BATCH_ELIMINACIONES || 2000);
@@ -287,7 +287,7 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
 
             lastProcessedId = envio.id;
 
-            if ((i + 1) % 100 === 0 || i + 1 === enviosRows.length) {
+            if ((i + 1) % 10 === 0 || i + 1 === enviosRows.length) {
                 console.log(`[ENVIOS] empresa=${didOwner} procesarEnvios progreso ${i + 1}/${enviosRows.length}`);
             }
         }
