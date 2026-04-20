@@ -229,6 +229,10 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
 
         for (let i = 0; i < enviosRows.length; i += 1) {
             const envio = enviosRows[i];
+            const debugEmpresa131 = didOwner === 131;
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1}/${enviosRows.length} did=${envio.did} id=${envio.id} before-build`);
+            }
             const envioDW = {
                 ...envio,
                 didEnvio: envio.did,
@@ -259,9 +263,18 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 VALUES (${placeholders})
             `;
 
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-insert`);
+            }
             const resInsert = await executeQuery(connDW, insertSql, valores, true);
             const newDwId = resInsert.insertId;
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-insert newDwId=${newDwId}`);
+            }
 
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-superado-1`);
+            }
             await executeQuery(
                 connDW,
                 `
@@ -274,7 +287,13 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 `,
                 [didOwner, envio.did, newDwId]
             );
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-superado-1`);
+            }
 
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} before-superado-0`);
+            }
             await executeQuery(
                 connDW,
                 `
@@ -284,6 +303,9 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
                 `,
                 [newDwId]
             );
+            if (debugEmpresa131) {
+                console.log(`[ENVIOS][131] item=${i + 1} did=${envio.did} after-superado-0`);
+            }
 
             lastProcessedId = envio.id;
 
