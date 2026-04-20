@@ -233,6 +233,13 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
             if (debugEmpresa131) {
                 console.log(`[ENVIOS][131] item=${i + 1}/${enviosRows.length} did=${envio.did} id=${envio.id} before-build`);
             }
+
+            if (didOwner === 131 && Number(envio.did) === 564378) {
+                console.log(`[ENVIOS][131] salto temporal diagnostico did=${envio.did} id=${envio.id}`);
+                lastProcessedId = envio.id;
+                continue;
+            }
+
             const envioDW = {
                 ...envio,
                 didEnvio: envio.did,
