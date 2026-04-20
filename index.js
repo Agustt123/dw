@@ -216,6 +216,7 @@ async function startJobs() {
 
     function iniciarSchedulers() {
         // ENVÍOS (CDC corre en proceso separado cdc.js)
+        runEnviosTick().catch(() => { });
         setInterval(() => {
             runEnviosTick().catch(() => { });
         }, 60 * 1000);
