@@ -1,5 +1,10 @@
 const { getConnection, executeQuery, redisClient, getConnectionLocalEnvios } = require("../db");
 
+const LIMITE_BATCH_ENVIOS = Number(process.env.LIMITE_BATCH_ENVIOS || 1000);
+const LIMITE_BATCH_ASIGNACIONES = Number(process.env.LIMITE_BATCH_ASIGNACIONES || 2000);
+const LIMITE_BATCH_ESTADOS = Number(process.env.LIMITE_BATCH_ESTADOS || 2000);
+const LIMITE_BATCH_ELIMINACIONES = Number(process.env.LIMITE_BATCH_ELIMINACIONES || 2000);
+
 async function sincronizarEnviosUnaVez() {
     let connDW = null;
 
@@ -195,9 +200,9 @@ async function procesarEnvios(connEmpresa, connDW, didOwner, columnasEnviosDW, m
             WHERE id > ?
               AND autofecha > '2026-01-01 00:00:00'
             ORDER BY id ASC
-            LIMIT 5000
+            LIMIT ?
             `,
-            [lastIdEnvios]
+            [lastIdEnvios, LIMITE_BATCH_ENVIOS]
         );
 
         metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
@@ -314,9 +319,9 @@ async function procesarAsignaciones(connEmpresa, connDW, didOwner, columnasAsign
         WHERE autofecha > '2026-01-01 00:00:00'
           AND id > ?
         ORDER BY id ASC
-        LIMIT 5000
+        LIMIT ?
         `,
-        [lastIdAsignaciones]
+        [lastIdAsignaciones, LIMITE_BATCH_ASIGNACIONES]
     );
 
     metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
@@ -408,9 +413,9 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
         WHERE id > ?
           AND autofecha > '2026-01-01 00:00:00'
         ORDER BY id ASC
-        LIMIT 5000
+        LIMIT ?
         `,
-        [lastIdEstados]
+        [lastIdEstados, LIMITE_BATCH_ESTADOS]
     );
 
     metrics.porEmpresa[didOwner] ??= { envios: 0, asignaciones: 0, estados: 0, eliminaciones: 0 };
@@ -494,7 +499,7 @@ async function procesarEstados(connEmpresa, connDW, didOwner, columnasEstadosDW,
     }
 }
 async function procesarEliminaciones(connEmpresa, connDW, didOwner, metrics) {
-    const limitParaEliminar = 5000;
+    const limitParaEliminar = LIMITE_BATCH_ELIMINACIONES;
     const last = await executeQuery(connDW, "SELECT idMaxSisIngActiElim FROM envios_max_ids WHERE didOwner = ?", [didOwner]);
     const lastId = last.length ? last[0].idMaxSisIngActiElim : 0;
 
