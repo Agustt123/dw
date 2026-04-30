@@ -55,6 +55,7 @@ async function startJobs() {
     const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
+    const { startRabbitmqJob } = require("./cron/cronRabbitmq.js");
 
     let empresasDB = null;
 
@@ -201,6 +202,7 @@ async function startJobs() {
         iniciarSchedulers();
         startMonitoreoJob();
         startMonitoreoMetricas();
+        startRabbitmqJob();
 
         process.on("SIGINT", async () => {
             console.log("🛑 [JOBS] Cerrando...");
@@ -253,3 +255,4 @@ async function startJobs() {
             console.error("❌ Error al iniciar:", err?.message || err);
         }
     })();
+

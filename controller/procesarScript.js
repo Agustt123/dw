@@ -1,5 +1,5 @@
 const { getConnection, getConnectionLocal, executeQuery, redisClient, getConnectionIndividual, getConnectionSistema } = require("../db");
-const EMPRESAS_BLOQUEADAS = new Set([275, 276, 345]);
+const EMPRESAS_BLOQUEADAS = new Set([275, 276, 345, 4]);
 
 async function ejecutarQueryParaTodasLasEmpresas(query, values = []) {
     try {
@@ -48,7 +48,9 @@ async function corregirFechasHistorialTodasEmpresas() {
         const empresaData = JSON.parse(empresaDataStr);
         const didOwners = Object.keys(empresaData); // Ej: ["2", "3", "4"]
         const query = `
-            ALTER TABLE costos_envios ADD COLUMN dataDetalle TEXT NOT NULL AFTER nameZonaCostoCliente;
+           ALTER TABLE camino_chofer
+ADD autofecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER did
+;
         `;
 
         for (const didOwnerStr of didOwners) {
@@ -60,7 +62,7 @@ async function corregirFechasHistorialTodasEmpresas() {
 
             try {
                 await executeQuery(conn, query);
-                console.log(`Empresa ${didOwner}: columna redis agregada en envios_historial`);
+                console.log(`Empresa ${didOwner}: columna mode de envios actualizada a VARCHAR(128)`);
             } catch (err) {
                 console.error(`Error ejecutando query para empresa ${didOwner}:`, err.message);
             } finally {
@@ -231,12 +233,12 @@ async function contarEnviosTodasEmpresas() {
         const didOwners = Object.keys(empresaData);
         console.log(`Empresas encontradas: ${didOwners.length}`);
 
-        const fechaInicioDesde = "2026-04-20 00:00:00";
+        const fechaInicioDesde = "2026-04-21 00:00:00";
 
         const countQuery = `
             SELECT COUNT(*) AS cantidad
-            FROM envios
-            WHERE fecha_inicio > ? and fecha_inicio < '2026-04-20 23:59:59'
+            FROM envios 
+            WHERE fecha_inicio > ? and fecha_inicio < '2026-04-21 23:59:59 and superado = 0 '
       
         `;
 
@@ -824,7 +826,7 @@ async function completarDidClientePorMlVendedorId() {
 
 async function main() {
     console.log("Ejecutando procesarScript...");
-    await contarEnviosTodasEmpresas();
+    await corregirFechasHistorialTodasEmpresas();
     console.log("Fin de procesarScript");
 }
 

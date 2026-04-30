@@ -22,6 +22,7 @@ function startApi() {
     const informeColecta = require("./route/informe-colecta.js");
     const cantidad = require("./route/cantidad.js");
     const monitorear = require("./route/monitoreo.js");
+    const entregados = require("./route/entregados.js");
 
     const app = express();
 
@@ -52,6 +53,7 @@ function startApi() {
 
     app.use("/cantidad", cantidad);
     app.use("/monitoreo", monitorear);
+    app.use("/entregados", entregados);
 
     app.listen(PORT, () => console.log(`✅ [API] Servidor escuchando en http://localhost:${PORT}`));
 }
@@ -80,6 +82,7 @@ async function startJobs() {
     const { pendientesHoy } = require("./controller/pendientesHoy/pendientes2.js");
     const { startMonitoreoJob } = require("./controller/monitoreoServidores/cronMonitoreo.js");
     const { startMonitoreoMetricas } = require("./controller/monitoreoServidores/crornMonitoreoMetricas.js");
+    const { startRabbitmqJob } = require("./cron/cronRabbitmq.js");
 
     let parentWatchdog = null;
 
@@ -301,3 +304,4 @@ async function startJobs() {
         console.error("❌ Error al iniciar:", err?.message || err);
     }
 })();
+
